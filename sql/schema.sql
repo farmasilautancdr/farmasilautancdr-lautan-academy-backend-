@@ -17,25 +17,30 @@ create table if not exists manager_pins (
 create table if not exists content (
   id bigserial primary key,
   topic text not null,
+  category text,
   title text not null,
   body text not null,
+  link text,
   created_at timestamptz not null default now()
 );
 
+-- score/percentage kept as text ("8/10", "80%") — matches GAS's own stored
+-- format exactly (Sheets column is free text, not a parsed number).
 create table if not exists results (
   id bigserial primary key,
   outlet text not null,
   name text not null,
   topic text,
-  score numeric,
-  percentage numeric,
+  score text,
+  percentage text,
   created_at timestamptz not null default now()
 );
 
 create table if not exists wrong_answers (
   id bigserial primary key,
   outlet text not null,
-  name text not null,
+  staff_name text not null,
+  topic text,
   question text,
   chosen text,
   correct text,
@@ -53,18 +58,22 @@ create table if not exists reports (
 
 create table if not exists ai_results (
   id bigserial primary key,
+  attempt_id text,
   outlet text not null,
   name text not null,
   topic text,
-  score numeric,
-  percentage numeric,
+  score text,
+  percentage text,
+  passcode text,
   created_at timestamptz not null default now()
 );
 
 create table if not exists ai_wrong_answers (
   id bigserial primary key,
+  attempt_id text,
   outlet text not null,
   staff_name text not null,
+  topic text,
   question text,
   chosen text,
   correct text,
