@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../config/db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { hitRateLimit } from '../middleware/rateLimit.js';
 
 export const questionsRouter = Router();
 
@@ -28,7 +29,16 @@ questionsRouter.get('/', async (req, res) => {
 // upfront. Not authoritative on its own: POST /data/results re-grades the
 // full submitted answer set independently at the end, so a tampered
 // response here can't change what actually gets saved.
+//
+// Rate-limited: a real attempt only ever needs one check per question
+// (the frontend locks a question in once answered) — without a cap,
+// looping this endpoint across every id/option would just rebuild the same
+// full answer key this change was meant to stop exposing, one call at a
+// time instead of one response.
 questionsRouter.post('/:id/check', requireAuth, async (req, res) => {
+  if (hitRateLimit(`check_std_${req.session.scopeKey}`, 80, 10 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Too many checks — slow down and try again shortly.' });
+  }
   const id = parseInt(req.params.id);
   const chosen = parseInt(req.body.chosen);
   const { rows } = await pool.query('select correct from standard_questions where id = $1', [id]);

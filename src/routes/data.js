@@ -111,10 +111,14 @@ function toResponse(results, wrong, aiResults, aiWrong, reports = []) {
 }
 
 // Staff-triggered: save a completed Standard Quiz attempt. Grades
-// server-side from a raw {id, chosen} answer array — the client never gets
-// to assert its own score. `standard_questions` is looked up by id AND
-// topic together so an id can't be reused to claim a different topic's
-// question was part of this attempt.
+// server-side against the topic's *actual* full question set — not the
+// client-submitted answers array, which is untrusted both for content
+// (chosen index) and for shape (which/how many questions it claims to
+// cover). Submitting a subset (e.g. only known-correct answers) or a
+// duplicated id can't inflate the score: `total` and the iteration are
+// both driven by the real bank, and the client is only ever consulted for
+// "what did they pick for question X", never "how many questions were
+// there" or "which questions counted".
 dataRouter.post('/results', requireAuth, async (req, res) => {
   const name = (req.body.name || '').toString().trim().toUpperCase();
   const outlet = (req.body.outlet || '').toString().trim().toUpperCase();
@@ -124,7 +128,6 @@ dataRouter.post('/results', requireAuth, async (req, res) => {
   if (req.session.scopeType !== 'staff_retail' || req.session.scopeKey !== `${outlet}|${name}`) {
     return res.status(403).json({ status: 'unauthorized' });
   }
-  if (!answers.length) return res.status(400).json({ status: 'error', error: 'No answers submitted.' });
 
   const { rows } = await pool.query(
     'select created_at from results where name=$1 and outlet=$2 and topic=$3 order by created_at desc limit 1',
@@ -133,26 +136,26 @@ dataRouter.post('/results', requireAuth, async (req, res) => {
   const alreadyToday = rows[0] && isSameCalendarDay(new Date(rows[0].created_at), new Date());
   if (alreadyToday) return res.json({ status: 'ok' });
 
-  const ids = answers.map((a) => parseInt(a.id)).filter((n) => !isNaN(n));
-  const { rows: questions } = await pool.query('select * from standard_questions where id = any($1) and topic = $2', [ids, topic]);
-  // bigserial comes back as a string from node-pg — normalize to number so
-  // Map lookups below (also parseInt'd) actually match.
-  const byId = new Map(questions.map((q) => [parseInt(q.id), q]));
+  const { rows: questions } = await pool.query("select * from standard_questions where topic = $1 and status = 'active' order by id", [topic]);
+  if (!questions.length) return res.status(404).json({ status: 'error', error: 'No questions found for this module.' });
+
+  // bigserial comes back as a string from node-pg — normalize to number.
+  // Last submission for a given id wins if the client sent duplicates.
+  const chosenById = new Map();
+  for (const a of answers) chosenById.set(parseInt(a.id), parseInt(a.chosen));
 
   let score = 0;
   const wrongRows = [];
-  for (const a of answers) {
-    const q = byId.get(parseInt(a.id));
-    if (!q) continue; // unknown id or topic mismatch — counts as unanswered, not trusted
-    const chosen = parseInt(a.chosen);
+  for (const q of questions) {
+    const chosen = chosenById.get(parseInt(q.id));
     if (chosen === q.correct) {
       score++;
     } else {
       const opts = [q.opt1_en, q.opt2_en, q.opt3_en, q.opt4_en];
-      wrongRows.push({ question: q.question_en, chosen: opts[chosen] ?? '', correct: opts[q.correct] ?? '' });
+      wrongRows.push({ question: q.question_en, chosen: opts[chosen] ?? '(no answer)', correct: opts[q.correct] ?? '' });
     }
   }
-  const total = answers.length;
+  const total = questions.length;
   const percentage = Math.round((score / total) * 100);
 
   await pool.query(
@@ -185,7 +188,6 @@ dataRouter.post('/ai-results', requireAuth, async (req, res) => {
 
   const validScope = ['staff_retail', 'staff_warehouse'].includes(req.session.scopeType) && req.session.scopeKey === `${outlet}|${name}`;
   if (!validScope) return res.status(403).json({ status: 'unauthorized' });
-  if (!answers.length) return res.status(400).json({ status: 'error', error: 'No answers submitted.' });
 
   const { rows } = await pool.query(
     'select created_at from ai_results where name=$1 and outlet=$2 and passcode=$3 order by created_at desc limit 1',
@@ -196,22 +198,27 @@ dataRouter.post('/ai-results', requireAuth, async (req, res) => {
 
   const { rows: quizRows } = await pool.query('select questions_json from ai_quizzes where outlet=$1 and passcode=$2', [outlet, passcode]);
   const stored = quizRows[0]?.questions_json;
-  if (!stored) return res.status(410).json({ status: 'error', error: 'This code has expired or been replaced — your progress could not be graded. Ask your manager for a fresh code.' });
+  if (!stored || !stored.length) return res.status(410).json({ status: 'error', error: 'This code has expired or been replaced — your progress could not be graded. Ask your manager for a fresh code.' });
+
+  // Graded against the quiz's real, full question set — total and the
+  // iteration are driven by `stored`, not by what the client claims it
+  // submitted. Same reasoning as POST /results: a subset or duplicated
+  // index in `answers` can't inflate the score.
+  const chosenByIndex = new Map();
+  for (const a of answers) chosenByIndex.set(parseInt(a.index), parseInt(a.chosen));
 
   let score = 0;
   const wrongRows = [];
-  for (const a of answers) {
-    const q = stored[parseInt(a.index)];
-    if (!q) continue;
-    const chosen = parseInt(a.chosen);
+  stored.forEach((q, i) => {
+    const chosen = chosenByIndex.get(i);
     if (chosen === q.correct) {
       score++;
     } else {
       const opts = [q.opt1_en, q.opt2_en, q.opt3_en, q.opt4_en];
-      wrongRows.push({ question: q.question_en, chosen: opts[chosen] ?? '', correct: opts[q.correct] ?? '' });
+      wrongRows.push({ question: q.question_en, chosen: opts[chosen] ?? '(no answer)', correct: opts[q.correct] ?? '' });
     }
-  }
-  const total = answers.length;
+  });
+  const total = stored.length;
   const percentage = Math.round((score / total) * 100);
 
   await pool.query(

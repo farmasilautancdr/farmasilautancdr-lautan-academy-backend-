@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../config/db.js';
 import { requireAuth, requireScope } from '../middleware/auth.js';
+import { hitRateLimit } from '../middleware/rateLimit.js';
 import { generateQuiz } from '../services/gemini.js';
 
 export const quizRouter = Router();
@@ -93,8 +94,15 @@ quizRouter.post('/redeem', async (req, res) => {
 // POST /questions/:id/check for Module Quiz — not authoritative, the final
 // save independently re-grades from the same stored questions_json.
 // index is the question's position in that stored array (AI-generated
-// quizzes have no other stable per-question id).
-quizRouter.post('/:outlet/check', async (req, res) => {
+// quizzes have no other stable per-question id). Authenticated + rate
+// limited for the same reason as the Standard Quiz check endpoint — staff
+// are always already logged in by the time they reach quiz-taking, so this
+// costs nothing for real use, and it closes off unauthenticated enumeration
+// of a quiz's full answer key one call at a time.
+quizRouter.post('/:outlet/check', requireAuth, async (req, res) => {
+  if (hitRateLimit(`check_ai_${req.session.scopeKey}`, 80, 10 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Too many checks — slow down and try again shortly.' });
+  }
   const outlet = req.params.outlet.toUpperCase();
   const passcode = (req.body.passcode || '').toString().trim();
   const index = parseInt(req.body.index);
