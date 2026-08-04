@@ -105,6 +105,29 @@ create table if not exists ai_quizzes (
   created_at timestamptz not null default now()
 );
 
+-- Standard Quiz question bank — matches GAS's Questions sheet exactly
+-- (topic, bilingual question/options, 0-indexed correct answer, status).
+-- Public read (GET /questions), no auth — matches GAS's doGet() serving
+-- this before login. Retail staff only, same as GAS: warehouse never had
+-- Standard Quiz, only AI Practice.
+--
+-- Named standard_questions, not questions — this Supabase project already
+-- has an unrelated, unused `questions` table (different shape: topic_id FK,
+-- jsonb options, correct_index) left over from an earlier abandoned
+-- attempt. Not touched; this table is intentionally separate.
+create table if not exists standard_questions (
+  id bigserial primary key,
+  topic text not null,
+  question_en text not null,
+  question_ms text not null,
+  opt1_en text, opt2_en text, opt3_en text, opt4_en text,
+  opt1_ms text, opt2_ms text, opt3_ms text, opt4_ms text,
+  correct int not null,
+  status text not null default 'active',
+  created_at timestamptz not null default now()
+);
+
 create index if not exists idx_results_outlet_name on results (outlet, name);
 create index if not exists idx_ai_results_outlet_name on ai_results (outlet, name);
 create index if not exists idx_ai_quizzes_passcode on ai_quizzes (passcode);
+create index if not exists idx_standard_questions_topic on standard_questions (topic);
