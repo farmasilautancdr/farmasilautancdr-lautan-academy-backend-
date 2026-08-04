@@ -12,4 +12,8 @@ export const env = {
   geminiApiKey: process.env.GEMINI_API_KEY || '',
   geminiModel: process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite',
   port: parseInt(process.env.PORT) || 3000,
+  // Optional — only the /content/upload route needs these. Not required()
+  // so the rest of the app still boots without them.
+  supabaseUrl: process.env.SUPABASE_URL || '',
+  supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
 };
