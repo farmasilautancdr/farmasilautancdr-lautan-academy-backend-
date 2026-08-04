@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../config/db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { outletsForArea } from '../config/areas.js';
 
 export const dataRouter = Router();
 
@@ -57,11 +58,13 @@ dataRouter.get('/scoped-data', requireAuth, async (req, res) => {
   }
 
   if (scopeType === 'area_manager') {
-    const outlet = scopeKey;
+    // scopeKey is the area id now, not one outlet — the manager sees every
+    // outlet in their assigned region.
+    const outlets = outletsForArea(scopeKey) || [];
     const [results, wrong, reports] = await Promise.all([
-      pool.query('select * from results where outlet=$1 order by created_at desc', [outlet]),
-      pool.query('select * from wrong_answers where outlet=$1 order by created_at desc', [outlet]),
-      pool.query('select * from reports where outlet=$1 order by created_at desc', [outlet]),
+      pool.query('select * from results where outlet = ANY($1) order by created_at desc', [outlets]),
+      pool.query('select * from wrong_answers where outlet = ANY($1) order by created_at desc', [outlets]),
+      pool.query('select * from reports where outlet = ANY($1) order by created_at desc', [outlets]),
     ]);
     return res.json(toResponse(results.rows, wrong.rows, [], [], reports.rows));
   }

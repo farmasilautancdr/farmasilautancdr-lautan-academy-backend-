@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { pool } from '../config/db.js';
 import { issueToken } from '../middleware/auth.js';
 import { isLockedOut, recordFailure, clearFailures } from '../middleware/rateLimit.js';
+import { outletsForArea } from '../config/areas.js';
 
 export const authRouter = Router();
 
@@ -74,9 +75,21 @@ authRouter.post('/manager-login', async (req, res) => {
   }
   clearFailures(failKey);
 
-  const scopeKey = role === 'supervisor' ? 'ALL' : (req.body.outlet || '').toString().trim().toUpperCase();
-  if (role !== 'supervisor' && !scopeKey) {
-    return res.status(400).json({ authorized: false, error: 'Select an outlet/location first.' });
+  // area_manager reuses the "outlet" field to carry the area id instead —
+  // scope is the whole region's outlets, not one. Not uppercased: area ids
+  // are mixed-case ("R1 - AMIRUL") and must match areas.js exactly.
+  let scopeKey;
+  if (role === 'supervisor') {
+    scopeKey = 'ALL';
+  } else if (role === 'area_manager') {
+    const areaId = (req.body.outlet || '').toString().trim();
+    if (!areaId || !outletsForArea(areaId)) {
+      return res.status(400).json({ authorized: false, error: 'Select a valid area.' });
+    }
+    scopeKey = areaId;
+  } else {
+    scopeKey = (req.body.outlet || '').toString().trim().toUpperCase();
+    if (!scopeKey) return res.status(400).json({ authorized: false, error: 'Select an outlet/location first.' });
   }
 
   const token = issueToken(role, scopeKey);
