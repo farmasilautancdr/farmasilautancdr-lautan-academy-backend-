@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../config/db.js';
 import { requireAuth, requireScope } from '../middleware/auth.js';
+import { outletsForArea } from '../config/areas.js';
 
 export const reportsRouter = Router();
 
@@ -16,8 +17,13 @@ reportsRouter.post('/', requireAuth, requireScope('area_manager'), async (req, r
   const manager = (req.body.manager || '').toString().trim();
   const isEdit = !!req.body.isEdit;
 
-  if (req.session.scopeKey !== outlet) {
-    return res.status(403).json({ status: 'error', message: 'Your session has expired — please log in again.' });
+  // scopeKey is the area id (region), not one outlet, since Area Manager
+  // region-scoping — validate the report's outlet is actually inside that
+  // manager's region, not an exact string match (which could never be
+  // true anymore and would 403 every real submission).
+  const regionOutlets = outletsForArea(req.session.scopeKey) || [];
+  if (!regionOutlets.includes(outlet)) {
+    return res.status(403).json({ status: 'error', message: 'That outlet is not in your assigned region.' });
   }
   if (!staffName || !topic || !manager) {
     return res.status(400).json({ status: 'error', message: 'Staff, topic, and manager are required.' });
