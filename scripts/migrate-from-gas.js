@@ -1,7 +1,14 @@
 // One-time migration: pulls full historical data out of GAS (via the
 // Supervisor scope, the one role with unscoped company-wide access) and
-// loads it into Postgres. Safe to re-run — truncates the target tables
-// first, so it's always a clean full resync rather than an incremental one.
+// loads it into Postgres.
+//
+// NO LONGER SAFE TO RE-RUN as of the results/ai-results cutover — it
+// truncates results/wrong_answers/ai_results/ai_wrong_answers/content before
+// reloading, and those first three now receive live writes directly from
+// this backend (POST /data/results, /data/ai-results) that GAS never sees.
+// Re-running this would silently wipe every attempt saved since the cutover.
+// For content specifically, use sync-content-from-gas.js instead — content
+// isn't written to by this backend yet, so truncate+reload stays safe there.
 //
 // Does NOT migrate Reports (schema mismatch — GAS has ~15 columns, this
 // backend's `reports` table is a 3-column stub) or Resources/referenceDocs
