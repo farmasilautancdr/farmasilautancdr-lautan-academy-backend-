@@ -110,18 +110,21 @@ function toResponse(results, wrong, aiResults, aiWrong, reports = []) {
   };
 }
 
-// Staff-triggered: save a completed Standard Quiz attempt.
+// Staff-triggered: save a completed Standard Quiz attempt. Grades
+// server-side from a raw {id, chosen} answer array — the client never gets
+// to assert its own score. `standard_questions` is looked up by id AND
+// topic together so an id can't be reused to claim a different topic's
+// question was part of this attempt.
 dataRouter.post('/results', requireAuth, async (req, res) => {
   const name = (req.body.name || '').toString().trim().toUpperCase();
   const outlet = (req.body.outlet || '').toString().trim().toUpperCase();
   const topic = (req.body.topic || 'N/A').toString().trim();
-  const score = (req.body.score || '').toString();
-  const perc = (req.body.perc || '').toString();
-  const wrongAnswers = Array.isArray(req.body.wrongAnswers) ? req.body.wrongAnswers : [];
+  const answers = Array.isArray(req.body.answers) ? req.body.answers : [];
 
   if (req.session.scopeType !== 'staff_retail' || req.session.scopeKey !== `${outlet}|${name}`) {
     return res.status(403).json({ status: 'unauthorized' });
   }
+  if (!answers.length) return res.status(400).json({ status: 'error', error: 'No answers submitted.' });
 
   const { rows } = await pool.query(
     'select created_at from results where name=$1 and outlet=$2 and topic=$3 order by created_at desc limit 1',
@@ -130,32 +133,59 @@ dataRouter.post('/results', requireAuth, async (req, res) => {
   const alreadyToday = rows[0] && isSameCalendarDay(new Date(rows[0].created_at), new Date());
   if (alreadyToday) return res.json({ status: 'ok' });
 
+  const ids = answers.map((a) => parseInt(a.id)).filter((n) => !isNaN(n));
+  const { rows: questions } = await pool.query('select * from standard_questions where id = any($1) and topic = $2', [ids, topic]);
+  // bigserial comes back as a string from node-pg — normalize to number so
+  // Map lookups below (also parseInt'd) actually match.
+  const byId = new Map(questions.map((q) => [parseInt(q.id), q]));
+
+  let score = 0;
+  const wrongRows = [];
+  for (const a of answers) {
+    const q = byId.get(parseInt(a.id));
+    if (!q) continue; // unknown id or topic mismatch — counts as unanswered, not trusted
+    const chosen = parseInt(a.chosen);
+    if (chosen === q.correct) {
+      score++;
+    } else {
+      const opts = [q.opt1_en, q.opt2_en, q.opt3_en, q.opt4_en];
+      wrongRows.push({ question: q.question_en, chosen: opts[chosen] ?? '', correct: opts[q.correct] ?? '' });
+    }
+  }
+  const total = answers.length;
+  const percentage = Math.round((score / total) * 100);
+
   await pool.query(
     'insert into results (outlet, name, topic, score, percentage) values ($1,$2,$3,$4,$5)',
-    [outlet, name, topic, score, perc]
+    [outlet, name, topic, `${score}/${total}`, `${percentage}%`]
   );
-  for (const item of wrongAnswers) {
+  for (const w of wrongRows) {
     await pool.query(
       'insert into wrong_answers (outlet, staff_name, topic, question, chosen, correct) values ($1,$2,$3,$4,$5,$6)',
-      [outlet, name, topic, (item.qText || '').toString().trim(), item.userChoice || '', item.correctText || '']
+      [outlet, name, topic, w.question, w.chosen, w.correct]
     );
   }
-  res.json({ status: 'ok' });
+  res.json({ status: 'ok', score, total, percentage });
 });
 
-// Staff-triggered: save a completed AI Practice attempt.
+// Staff-triggered: save a completed AI Practice attempt. Grades server-side
+// from a raw {index, chosen} answer array against the quiz's own stored
+// questions_json (index = position in that array, AI-generated quizzes have
+// no other stable per-question id). If the outlet's quiz row has since been
+// overwritten by a new one (manager regenerated mid-attempt) or ended, this
+// fails with a clear error instead of silently accepting a client-asserted
+// score for a quiz that may no longer match what was actually taken.
 dataRouter.post('/ai-results', requireAuth, async (req, res) => {
   const name = (req.body.name || '').toString().trim().toUpperCase();
   const outlet = (req.body.outlet || '').toString().trim().toUpperCase();
   const topic = (req.body.topic || 'N/A').toString().trim();
-  const score = (req.body.score || '').toString();
-  const perc = (req.body.perc || '').toString();
   const passcode = (req.body.passcode || '').toString().trim();
   const attemptId = (req.body.attemptId || `AI${Date.now()}`).toString();
-  const wrongAnswers = Array.isArray(req.body.wrongAnswers) ? req.body.wrongAnswers : [];
+  const answers = Array.isArray(req.body.answers) ? req.body.answers : [];
 
   const validScope = ['staff_retail', 'staff_warehouse'].includes(req.session.scopeType) && req.session.scopeKey === `${outlet}|${name}`;
   if (!validScope) return res.status(403).json({ status: 'unauthorized' });
+  if (!answers.length) return res.status(400).json({ status: 'error', error: 'No answers submitted.' });
 
   const { rows } = await pool.query(
     'select created_at from ai_results where name=$1 and outlet=$2 and passcode=$3 order by created_at desc limit 1',
@@ -164,15 +194,35 @@ dataRouter.post('/ai-results', requireAuth, async (req, res) => {
   const alreadyToday = rows[0] && isSameCalendarDay(new Date(rows[0].created_at), new Date());
   if (alreadyToday) return res.json({ status: 'ok' });
 
+  const { rows: quizRows } = await pool.query('select questions_json from ai_quizzes where outlet=$1 and passcode=$2', [outlet, passcode]);
+  const stored = quizRows[0]?.questions_json;
+  if (!stored) return res.status(410).json({ status: 'error', error: 'This code has expired or been replaced — your progress could not be graded. Ask your manager for a fresh code.' });
+
+  let score = 0;
+  const wrongRows = [];
+  for (const a of answers) {
+    const q = stored[parseInt(a.index)];
+    if (!q) continue;
+    const chosen = parseInt(a.chosen);
+    if (chosen === q.correct) {
+      score++;
+    } else {
+      const opts = [q.opt1_en, q.opt2_en, q.opt3_en, q.opt4_en];
+      wrongRows.push({ question: q.question_en, chosen: opts[chosen] ?? '', correct: opts[q.correct] ?? '' });
+    }
+  }
+  const total = answers.length;
+  const percentage = Math.round((score / total) * 100);
+
   await pool.query(
     'insert into ai_results (attempt_id, outlet, name, topic, score, percentage, passcode) values ($1,$2,$3,$4,$5,$6,$7)',
-    [attemptId, outlet, name, topic, score, perc, passcode]
+    [attemptId, outlet, name, topic, `${score}/${total}`, `${percentage}%`, passcode]
   );
-  for (const item of wrongAnswers) {
+  for (const w of wrongRows) {
     await pool.query(
       'insert into ai_wrong_answers (attempt_id, outlet, staff_name, topic, question, chosen, correct) values ($1,$2,$3,$4,$5,$6,$7)',
-      [attemptId, outlet, name, topic, (item.qText || '').toString().trim(), item.userChoice || '', item.correctText || '']
+      [attemptId, outlet, name, topic, w.question, w.chosen, w.correct]
     );
   }
-  res.json({ status: 'ok' });
+  res.json({ status: 'ok', score, total, percentage });
 });

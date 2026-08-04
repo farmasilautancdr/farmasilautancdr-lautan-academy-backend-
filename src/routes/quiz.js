@@ -83,7 +83,30 @@ quizRouter.post('/redeem', async (req, res) => {
     return res.status(410).json({ error: 'This code expired (codes last 1 hour). Ask your outlet manager for a fresh one.' });
   }
 
-  res.json({ topic: match.topic, questions: match.questions_json, passcode });
+  // `correct` withheld — server grades attempts itself (see POST
+  // /data/ai-results and /quiz/:outlet/check), matches Standard Quiz.
+  const questions = match.questions_json.map(({ correct, ...q }) => q);
+  res.json({ topic: match.topic, questions, passcode });
+});
+
+// Live per-question reveal for AI Practice, same role as
+// POST /questions/:id/check for Module Quiz — not authoritative, the final
+// save independently re-grades from the same stored questions_json.
+// index is the question's position in that stored array (AI-generated
+// quizzes have no other stable per-question id).
+quizRouter.post('/:outlet/check', async (req, res) => {
+  const outlet = req.params.outlet.toUpperCase();
+  const passcode = (req.body.passcode || '').toString().trim();
+  const index = parseInt(req.body.index);
+  const chosen = parseInt(req.body.chosen);
+
+  const { rows } = await pool.query(
+    'select questions_json from ai_quizzes where outlet = $1 and passcode = $2',
+    [outlet, passcode]
+  );
+  const q = rows[0]?.questions_json?.[index];
+  if (!q) return res.status(404).json({ error: 'Question not found — this code may have expired or been replaced.' });
+  res.json({ correct: chosen === q.correct, correctIndex: q.correct });
 });
 
 // Manager dashboard: current code + timer for their outlet.
