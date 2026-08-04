@@ -4,6 +4,7 @@ create table if not exists staff_roster (
   outlet text not null,
   name text not null,
   pin_hash text not null,
+  id_note text,                  -- matches GAS's IDNote column, disambiguates duplicate names
   added_by text,
   created_at timestamptz not null default now(),
   unique (division, outlet, name)

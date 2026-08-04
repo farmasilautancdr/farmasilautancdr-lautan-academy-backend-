@@ -24,12 +24,12 @@ staffRouter.get('/full', requireAuth, requireScope('outlet_manager', 'warehouse_
   if (!checkOutletScope(req, res, division, outlet)) return;
 
   const { rows } = await pool.query(
-    'select name, added_by, created_at from staff_roster where division=$1 and outlet=$2 order by name',
+    'select name, id_note, added_by, created_at from staff_roster where division=$1 and outlet=$2 order by name',
     [division, outlet]
   );
   res.json({
     authorized: true,
-    staff: rows.map(r => ({ Name: r.name, AddedBy: r.added_by, Timestamp: r.created_at })),
+    staff: rows.map(r => ({ Name: r.name, IDNote: r.id_note, AddedBy: r.added_by, Timestamp: r.created_at })),
   });
 });
 
@@ -38,6 +38,7 @@ staffRouter.post('/', requireAuth, requireScope('outlet_manager', 'warehouse_man
   const outlet = (req.body.outlet || '').toString().trim().toUpperCase();
   const name = (req.body.name || '').toString().trim().toUpperCase();
   const pin = (req.body.pin || '').toString().trim();
+  const idNote = (req.body.idNote || '').toString().trim();
   const addedBy = (req.body.addedBy || '').toString().trim();
   if (!checkOutletScope(req, res, division, outlet)) return;
 
@@ -55,8 +56,8 @@ staffRouter.post('/', requireAuth, requireScope('outlet_manager', 'warehouse_man
 
   const pinHash = await bcrypt.hash(pin, 10);
   await pool.query(
-    'insert into staff_roster (division, outlet, name, pin_hash, added_by) values ($1,$2,$3,$4,$5)',
-    [division, outlet, name, pinHash, addedBy]
+    'insert into staff_roster (division, outlet, name, pin_hash, id_note, added_by) values ($1,$2,$3,$4,$5,$6)',
+    [division, outlet, name, pinHash, idNote, addedBy]
   );
   res.json({ status: 'ok' });
 });
