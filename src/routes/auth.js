@@ -6,6 +6,21 @@ import { isLockedOut, recordFailure, clearFailures } from '../middleware/rateLim
 
 export const authRouter = Router();
 
+// Public — names only, no pin_hash, no auth required. Mirrors GAS's
+// getPublicStaffRoster: needed so a login picker can list names before
+// anyone's authenticated. Never returns pin_hash in either direction.
+authRouter.get('/staff-roster', async (req, res) => {
+  const division = (req.query.division || '').toString().trim().toLowerCase();
+  const outlet = (req.query.outlet || '').toString().trim().toUpperCase();
+  if (!division || !outlet) return res.json({ staff: [] });
+
+  const { rows } = await pool.query(
+    'select name from staff_roster where division = $1 and outlet = $2 order by name',
+    [division, outlet]
+  );
+  res.json({ staff: rows.map(r => r.name) });
+});
+
 // Staff: division + outlet + name + PIN -> JWT scoped to staff_retail/staff_warehouse
 authRouter.post('/staff-login', async (req, res) => {
   const division = (req.body.division || '').toString().trim().toLowerCase();
