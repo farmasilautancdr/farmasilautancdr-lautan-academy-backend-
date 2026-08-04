@@ -16,4 +16,8 @@ export const env = {
   // so the rest of the app still boots without them.
   supabaseUrl: process.env.SUPABASE_URL || '',
   supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+  // Optional — only /resources needs these. Not required() so the rest of
+  // the app still boots without them.
+  googleServiceAccountJson: process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '',
+  referenceFolderId: process.env.REFERENCE_FOLDER_ID || '',
 };
