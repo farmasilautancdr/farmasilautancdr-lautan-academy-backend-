@@ -47,13 +47,27 @@ create table if not exists wrong_answers (
   created_at timestamptz not null default now()
 );
 
+-- Matches the live GAS report form's active fields only — the sheet has
+-- 15 columns total, but 5 (Competency Comments, Housebrand Focus, the old
+-- numeric Product Knowledge, Communication and Customer Service) haven't
+-- been written to since v1.29/v1.34; not carried over since this table
+-- starts empty either way (see SCOPE_TRACKER.md — Reports data was never
+-- migrated). One report per outlet+staff_name+topic, matches GAS exactly.
 create table if not exists reports (
   id bigserial primary key,
   outlet text not null,
   staff_name text not null,
-  body text,
-  created_by text,
-  created_at timestamptz not null default now()
+  manager text not null,
+  topic text not null,
+  quiz_score text,
+  skill_level text,
+  performance_gaps text,
+  recommendations text,
+  competency int,
+  product_knowledge_comments text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (outlet, staff_name, topic)
 );
 
 create table if not exists ai_results (

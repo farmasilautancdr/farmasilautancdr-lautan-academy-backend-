@@ -5,6 +5,7 @@ import { authRouter } from './routes/auth.js';
 import { quizRouter } from './routes/quiz.js';
 import { dataRouter } from './routes/data.js';
 import { contentRouter } from './routes/content.js';
+import { reportsRouter } from './routes/reports.js';
 
 const app = express();
 app.use(cors());
@@ -14,6 +15,7 @@ app.use('/auth', authRouter);
 app.use('/quiz', quizRouter);
 app.use('/data', dataRouter);
 app.use('/content', contentRouter);
+app.use('/reports', reportsRouter);
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 

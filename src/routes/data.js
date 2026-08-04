@@ -16,13 +16,14 @@ dataRouter.get('/scoped-data', requireAuth, async (req, res) => {
 
   if (scopeType === 'staff_retail') {
     const [outlet, name] = scopeKey.split('|');
-    const [results, wrong, aiResults, aiWrong] = await Promise.all([
+    const [results, wrong, aiResults, aiWrong, reports] = await Promise.all([
       pool.query('select * from results where outlet=$1 and name=$2 order by created_at desc', [outlet, name]),
       pool.query('select * from wrong_answers where outlet=$1 and staff_name=$2 order by created_at desc', [outlet, name]),
       pool.query('select * from ai_results where outlet=$1 and name=$2 order by created_at desc', [outlet, name]),
       pool.query('select * from ai_wrong_answers where outlet=$1 and staff_name=$2 order by created_at desc', [outlet, name]),
+      pool.query('select * from reports where outlet=$1 and staff_name=$2 order by created_at desc', [outlet, name]),
     ]);
-    return res.json(toResponse(results.rows, wrong.rows, aiResults.rows, aiWrong.rows));
+    return res.json(toResponse(results.rows, wrong.rows, aiResults.rows, aiWrong.rows, reports.rows));
   }
 
   if (scopeType === 'staff_warehouse') {
@@ -36,13 +37,14 @@ dataRouter.get('/scoped-data', requireAuth, async (req, res) => {
 
   if (scopeType === 'outlet_manager') {
     const outlet = scopeKey;
-    const [results, wrong, aiResults, aiWrong] = await Promise.all([
+    const [results, wrong, aiResults, aiWrong, reports] = await Promise.all([
       pool.query('select * from results where outlet=$1 order by created_at desc', [outlet]),
       pool.query('select * from wrong_answers where outlet=$1 order by created_at desc', [outlet]),
       pool.query('select * from ai_results where outlet=$1 order by created_at desc', [outlet]),
       pool.query('select * from ai_wrong_answers where outlet=$1 order by created_at desc', [outlet]),
+      pool.query('select * from reports where outlet=$1 order by created_at desc', [outlet]),
     ]);
-    return res.json(toResponse(results.rows, wrong.rows, aiResults.rows, aiWrong.rows));
+    return res.json(toResponse(results.rows, wrong.rows, aiResults.rows, aiWrong.rows, reports.rows));
   }
 
   if (scopeType === 'warehouse_manager') {
@@ -56,11 +58,12 @@ dataRouter.get('/scoped-data', requireAuth, async (req, res) => {
 
   if (scopeType === 'area_manager') {
     const outlet = scopeKey;
-    const [results, wrong] = await Promise.all([
+    const [results, wrong, reports] = await Promise.all([
       pool.query('select * from results where outlet=$1 order by created_at desc', [outlet]),
       pool.query('select * from wrong_answers where outlet=$1 order by created_at desc', [outlet]),
+      pool.query('select * from reports where outlet=$1 order by created_at desc', [outlet]),
     ]);
-    return res.json(toResponse(results.rows, wrong.rows, [], []));
+    return res.json(toResponse(results.rows, wrong.rows, [], [], reports.rows));
   }
 
   if (scopeType === 'supervisor') {
@@ -71,27 +74,36 @@ dataRouter.get('/scoped-data', requireAuth, async (req, res) => {
       params.push(`${windowMonths} months`);
       cutoffClause = ` where created_at > now() - $1::interval`;
     }
-    const [results, wrong, aiResults, aiWrong] = await Promise.all([
+    const [results, wrong, aiResults, aiWrong, reports] = await Promise.all([
       pool.query(`select * from results${cutoffClause} order by created_at desc`, params),
       pool.query(`select * from wrong_answers${cutoffClause} order by created_at desc`, params),
       pool.query(`select * from ai_results${cutoffClause} order by created_at desc`, params),
       pool.query(`select * from ai_wrong_answers${cutoffClause} order by created_at desc`, params),
+      pool.query(`select * from reports${cutoffClause} order by created_at desc`, params),
     ]);
-    return res.json(toResponse(results.rows, wrong.rows, aiResults.rows, aiWrong.rows));
+    return res.json(toResponse(results.rows, wrong.rows, aiResults.rows, aiWrong.rows, reports.rows));
   }
 
-  res.json({ authorized: true, ...empty });
+  res.json({ authorized: true, ...empty, reports: [] });
 });
 
 // Field names match GAS's Sheet-header casing exactly — the frontend reads
-// r.Outlet, r["Staff Name"], r["Question Text"], etc. verbatim.
-function toResponse(results, wrong, aiResults, aiWrong) {
+// r.Outlet, r["Staff Name"], r["Question Text"], etc. verbatim. Reports uses
+// "Fluency" for the competency column — matches GAS's v1.34 relabel (UI
+// calls it "Competency", sheet column name stayed "Fluency").
+function toResponse(results, wrong, aiResults, aiWrong, reports = []) {
   return {
     authorized: true,
     results: results.map(r => ({ Timestamp: r.created_at, Name: r.name, Outlet: r.outlet, Score: r.score, Percentage: r.percentage, Topic: r.topic })),
     wrongAnswers: wrong.map(w => ({ Timestamp: w.created_at, 'Staff Name': w.staff_name, Outlet: w.outlet, Topic: w.topic, 'Question Text': w.question, 'User Choice': w.chosen, 'Correct Answer': w.correct })),
     aiResults: aiResults.map(r => ({ Timestamp: r.created_at, AttemptID: r.attempt_id, Name: r.name, Outlet: r.outlet, Score: r.score, Percentage: r.percentage, Topic: r.topic, Passcode: r.passcode })),
     aiWrongAnswers: aiWrong.map(w => ({ Timestamp: w.created_at, AttemptID: w.attempt_id, 'Staff Name': w.staff_name, Outlet: w.outlet, Topic: w.topic, 'Question Text': w.question, 'User Choice': w.chosen, 'Correct Answer': w.correct })),
+    reports: reports.map(r => ({
+      Timestamp: r.created_at, Manager: r.manager, Outlet: r.outlet, 'Staff Name': r.staff_name,
+      'Quiz Score': r.quiz_score, 'Training Title': r.topic, 'Skill Level': r.skill_level,
+      'Performance Gaps': r.performance_gaps, Recommendations: r.recommendations,
+      Fluency: r.competency, 'Product Knowledge Comments': r.product_knowledge_comments,
+    })),
   };
 }
 
