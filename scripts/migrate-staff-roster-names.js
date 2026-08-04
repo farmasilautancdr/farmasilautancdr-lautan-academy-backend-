@@ -9,7 +9,7 @@
 // Safe to re-run: uses ON CONFLICT DO NOTHING on (division, outlet, name),
 // so it never overwrites a PIN that's already been reset through real use.
 import 'dotenv/config';
-import bcrypt from 'bcryptjs';
+import bcrypt from 'bcrypt';
 import pg from 'pg';
 import { env } from '../src/config/env.js';
 

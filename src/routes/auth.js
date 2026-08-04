@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import bcrypt from 'bcryptjs';
+import bcrypt from 'bcrypt';
 import { pool } from '../config/db.js';
 import { issueToken } from '../middleware/auth.js';
 import { isLockedOut, recordFailure, clearFailures } from '../middleware/rateLimit.js';

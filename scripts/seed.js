@@ -4,7 +4,7 @@
 //
 // role is one of: outlet_manager, warehouse_manager, area_manager, supervisor, resources
 import 'dotenv/config';
-import bcrypt from 'bcryptjs';
+import bcrypt from 'bcrypt';
 import pg from 'pg';
 import { env } from '../src/config/env.js';
 
