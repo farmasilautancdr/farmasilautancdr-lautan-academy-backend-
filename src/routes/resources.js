@@ -23,7 +23,7 @@ function categorizeFolderName(name) {
 
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 
-function fileToRefDoc(file, category) {
+function fileToRefDoc(file, category, subcategory) {
   const mime = file.mimeType;
   let kind = 'File', downloadUrl = `https://drive.google.com/uc?export=download&id=${file.id}`;
   if (mime === 'application/vnd.google-apps.document') { kind = 'Doc'; downloadUrl = `https://docs.google.com/document/d/${file.id}/export?format=pdf`; }
@@ -31,7 +31,7 @@ function fileToRefDoc(file, category) {
   else if (mime === 'application/vnd.google-apps.spreadsheet') { kind = 'Sheet'; downloadUrl = `https://docs.google.com/spreadsheets/d/${file.id}/export?format=pdf`; }
   else if (mime === 'application/pdf') { kind = 'PDF'; }
   return {
-    ID: file.id, Name: file.name, Kind: kind, Category: category,
+    ID: file.id, Name: file.name, Kind: kind, Category: category, Subcategory: subcategory || '',
     PreviewURL: `https://drive.google.com/file/d/${file.id}/preview`,
     DownloadURL: downloadUrl, Updated: file.modifiedTime,
   };
@@ -59,10 +59,16 @@ async function listChildren(drive, folderId) {
 }
 
 // Recursively walks a folder and everything nested inside it, tagging every
-// file found with the same top-level category — matches GAS's
-// collectFilesRecursive. Each file/folder failure is caught individually so
-// one bad item can't wipe out everything else already found.
-async function walkFolder(drive, folderId, category, docs, stats) {
+// file found with the top-level category (matches GAS's
+// collectFilesRecursive) plus one extra level: the name of the immediate
+// subfolder under the category root, if any. A file at
+// "Housebrand Modules/Allife/2026/x.pdf" gets Subcategory "Allife" — the
+// first folder name below the category root — not "2026"; once subcategory
+// is set it's inherited going deeper rather than overwritten, so depth
+// beyond that first level doesn't fragment the grouping further. Each
+// file/folder failure is caught individually so one bad item can't wipe out
+// everything else already found.
+async function walkFolder(drive, folderId, category, subcategory, docs, stats) {
   stats.foldersVisited++;
   let children;
   try {
@@ -75,12 +81,14 @@ async function walkFolder(drive, folderId, category, docs, stats) {
     if (f.mimeType === FOLDER_MIME) continue;
     try {
       await trySetPublicLink(drive, f.id, stats);
-      docs.push(fileToRefDoc(f, category));
+      docs.push(fileToRefDoc(f, category, subcategory));
       stats.filesFound++;
     } catch (e) { stats.fileErrors++; }
   }
   for (const f of children) {
-    if (f.mimeType === FOLDER_MIME) await walkFolder(drive, f.id, category, docs, stats);
+    if (f.mimeType === FOLDER_MIME) {
+      await walkFolder(drive, f.id, category, subcategory || f.name, docs, stats);
+    }
   }
 }
 
@@ -110,15 +118,16 @@ async function getReferenceDocs() {
   for (const f of looseFiles) {
     try {
       await trySetPublicLink(drive, f.id, stats);
-      docs.push(fileToRefDoc(f, 'Halal Certificate'));
+      docs.push(fileToRefDoc(f, 'Halal Certificate', ''));
       stats.filesFound++;
     } catch (e) { stats.fileErrors++; }
   }
 
   // Each named subfolder → its matching section, walked recursively.
+  // subcategory starts empty — the first folder level found inside sets it.
   const subfolders = items.filter(f => f.mimeType === FOLDER_MIME);
   for (const sub of subfolders) {
-    await walkFolder(drive, sub.id, categorizeFolderName(sub.name), docs, stats);
+    await walkFolder(drive, sub.id, categorizeFolderName(sub.name), '', docs, stats);
   }
 
   return { docs, stats };
