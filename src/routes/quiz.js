@@ -100,7 +100,7 @@ quizRouter.post('/redeem', async (req, res) => {
 // costs nothing for real use, and it closes off unauthenticated enumeration
 // of a quiz's full answer key one call at a time.
 quizRouter.post('/:outlet/check', requireAuth, async (req, res) => {
-  if (hitRateLimit(`check_ai_${req.session.scopeKey}`, 80, 10 * 60 * 1000)) {
+  if (await hitRateLimit(`check_ai_${req.session.scopeKey}`, 80, 10 * 60 * 1000)) {
     return res.status(429).json({ error: 'Too many checks — slow down and try again shortly.' });
   }
   const outlet = req.params.outlet.toUpperCase();

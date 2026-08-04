@@ -36,7 +36,7 @@ questionsRouter.get('/', async (req, res) => {
 // full answer key this change was meant to stop exposing, one call at a
 // time instead of one response.
 questionsRouter.post('/:id/check', requireAuth, async (req, res) => {
-  if (hitRateLimit(`check_std_${req.session.scopeKey}`, 80, 10 * 60 * 1000)) {
+  if (await hitRateLimit(`check_std_${req.session.scopeKey}`, 80, 10 * 60 * 1000)) {
     return res.status(429).json({ error: 'Too many checks — slow down and try again shortly.' });
   }
   const id = parseInt(req.params.id);

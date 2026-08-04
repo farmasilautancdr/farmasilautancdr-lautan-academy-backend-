@@ -127,7 +127,20 @@ create table if not exists standard_questions (
   created_at timestamptz not null default now()
 );
 
+-- Backs middleware/rateLimit.js — login lockout (5 fails/5 min) and the
+-- check-endpoint throttle (80 calls/10 min) share this one table, distinct
+-- key prefixes ("staff_...", "mgr_...", "check_std_...", "check_ai_...")
+-- keep them from colliding. Postgres-backed instead of an in-memory Map so
+-- it survives restarts/redeploys and would stay correct if this backend
+-- ever ran as more than one instance.
+create table if not exists rate_limits (
+  key text primary key,
+  count int not null default 1,
+  expires_at timestamptz not null
+);
+
 create index if not exists idx_results_outlet_name on results (outlet, name);
 create index if not exists idx_ai_results_outlet_name on ai_results (outlet, name);
 create index if not exists idx_ai_quizzes_passcode on ai_quizzes (passcode);
 create index if not exists idx_standard_questions_topic on standard_questions (topic);
+create index if not exists idx_rate_limits_expires_at on rate_limits (expires_at);

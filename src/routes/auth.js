@@ -30,7 +30,7 @@ authRouter.post('/staff-login', async (req, res) => {
   const pin = (req.body.pin || '').toString().trim();
 
   const failKey = `staff_${division}_${outlet}_${name}`;
-  if (isLockedOut(failKey)) {
+  if (await isLockedOut(failKey)) {
     return res.status(429).json({ authorized: false, error: 'Too many attempts. Please wait a few minutes and try again.' });
   }
 
@@ -41,11 +41,11 @@ authRouter.post('/staff-login', async (req, res) => {
   const match = rows[0];
   const ok = match && pin && await bcrypt.compare(pin, match.pin_hash);
   if (!ok) {
-    recordFailure(failKey);
+    await recordFailure(failKey);
     return res.json({ authorized: false });
   }
 
-  clearFailures(failKey);
+  await clearFailures(failKey);
   const scopeType = division === 'warehouse' ? 'staff_warehouse' : 'staff_retail';
   const scopeKey = `${outlet}|${name}`;
   const token = issueToken(scopeType, scopeKey);
@@ -62,7 +62,7 @@ authRouter.post('/manager-login', async (req, res) => {
   }
 
   const failKey = `mgr_${role}`;
-  if (isLockedOut(failKey)) {
+  if (await isLockedOut(failKey)) {
     return res.status(429).json({ authorized: false, error: 'Too many attempts. Please wait a few minutes and try again.' });
   }
 
@@ -70,10 +70,10 @@ authRouter.post('/manager-login', async (req, res) => {
   const match = rows[0];
   const ok = match && pin && await bcrypt.compare(pin, match.pin_hash);
   if (!ok) {
-    recordFailure(failKey);
+    await recordFailure(failKey);
     return res.json({ authorized: false, error: 'Incorrect password.' });
   }
-  clearFailures(failKey);
+  await clearFailures(failKey);
 
   // area_manager reuses the "outlet" field to carry the area id instead —
   // scope is the whole region's outlets, not one. Not uppercased: area ids
