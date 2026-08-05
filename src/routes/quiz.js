@@ -3,6 +3,7 @@ import { pool } from '../config/db.js';
 import { requireAuth, requireScope } from '../middleware/auth.js';
 import { hitRateLimit } from '../middleware/rateLimit.js';
 import { generateQuiz } from '../services/gemini.js';
+import { getDriveFileText } from '../services/drive.js';
 
 export const quizRouter = Router();
 
@@ -26,8 +27,17 @@ quizRouter.post('/create', requireAuth, requireScope('outlet_manager', 'warehous
   const count = Math.min(Math.max(parseInt(req.body.count) || 10, 1), 25);
   const extraNotes = (req.body.extraNotes || '').toString().trim();
 
+  // 'resource': sourceValue is a Drive file id (from Browse Courses'
+  // "Create Quiz from this" button on a Drive-backed entry) — extracted
+  // live via getDriveFileText (native export for Google Docs/Slides/
+  // Sheets, download+parse for PDF/docx/pptx/xlsx, see services/drive.js
+  // + textExtract.js). Anything else (legacy .doc/.ppt/.xls, images)
+  // returns '' and falls through to the generic-knowledge prompt below,
+  // same as an unmatched topic already does.
   let context = '';
-  if (sourceType !== 'resource') {
+  if (sourceType === 'resource') {
+    context = await getDriveFileText(sourceValue);
+  } else {
     const { rows } = await pool.query(
       'select title, body from content where topic = $1',
       [sourceValue]

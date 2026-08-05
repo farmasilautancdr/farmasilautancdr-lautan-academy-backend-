@@ -1,7 +1,7 @@
 import { Router } from 'express';
-import { google } from 'googleapis';
 import { env } from '../config/env.js';
 import { requireAuth } from '../middleware/auth.js';
+import { getDriveClient } from '../services/drive.js';
 
 export const resourcesRouter = Router();
 
@@ -90,13 +90,6 @@ async function walkFolder(drive, folderId, category, subcategory, docs, stats) {
       await walkFolder(drive, f.id, category, subcategory || f.name, docs, stats);
     }
   }
-}
-
-function getDriveClient() {
-  if (!env.googleServiceAccountJson) return null;
-  const credentials = JSON.parse(env.googleServiceAccountJson);
-  const auth = new google.auth.GoogleAuth({ credentials, scopes: ['https://www.googleapis.com/auth/drive'] });
-  return google.drive({ version: 'v3', auth });
 }
 
 async function getReferenceDocs() {

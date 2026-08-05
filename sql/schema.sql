@@ -27,8 +27,13 @@ create table if not exists content (
 
 -- score/percentage kept as text ("8/10", "80%") — matches GAS's own stored
 -- format exactly (Sheets column is free text, not a parsed number).
+-- attempt_id mirrors ai_results' column (added later — see migration below
+-- for existing databases) so a retaken topic's wrong answers can be scoped
+-- to the specific attempt instead of matched by topic alone, which mixed
+-- every retake's wrong answers together in Quiz History.
 create table if not exists results (
   id bigserial primary key,
+  attempt_id text,
   outlet text not null,
   name text not null,
   topic text,
@@ -39,6 +44,7 @@ create table if not exists results (
 
 create table if not exists wrong_answers (
   id bigserial primary key,
+  attempt_id text,
   outlet text not null,
   staff_name text not null,
   topic text,

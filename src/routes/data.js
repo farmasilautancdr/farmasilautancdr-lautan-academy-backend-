@@ -97,8 +97,8 @@ dataRouter.get('/scoped-data', requireAuth, async (req, res) => {
 function toResponse(results, wrong, aiResults, aiWrong, reports = []) {
   return {
     authorized: true,
-    results: results.map(r => ({ Timestamp: r.created_at, Name: r.name, Outlet: r.outlet, Score: r.score, Percentage: r.percentage, Topic: r.topic })),
-    wrongAnswers: wrong.map(w => ({ Timestamp: w.created_at, 'Staff Name': w.staff_name, Outlet: w.outlet, Topic: w.topic, 'Question Text': w.question, 'User Choice': w.chosen, 'Correct Answer': w.correct })),
+    results: results.map(r => ({ Timestamp: r.created_at, AttemptID: r.attempt_id, Name: r.name, Outlet: r.outlet, Score: r.score, Percentage: r.percentage, Topic: r.topic })),
+    wrongAnswers: wrong.map(w => ({ Timestamp: w.created_at, AttemptID: w.attempt_id, 'Staff Name': w.staff_name, Outlet: w.outlet, Topic: w.topic, 'Question Text': w.question, 'User Choice': w.chosen, 'Correct Answer': w.correct })),
     aiResults: aiResults.map(r => ({ Timestamp: r.created_at, AttemptID: r.attempt_id, Name: r.name, Outlet: r.outlet, Score: r.score, Percentage: r.percentage, Topic: r.topic, Passcode: r.passcode })),
     aiWrongAnswers: aiWrong.map(w => ({ Timestamp: w.created_at, AttemptID: w.attempt_id, 'Staff Name': w.staff_name, Outlet: w.outlet, Topic: w.topic, 'Question Text': w.question, 'User Choice': w.chosen, 'Correct Answer': w.correct })),
     reports: reports.map(r => ({
@@ -157,15 +157,19 @@ dataRouter.post('/results', requireAuth, async (req, res) => {
   }
   const total = questions.length;
   const percentage = Math.round((score / total) * 100);
+  // Own id (not shared with ai_results' "AI..." ids) so a retaken topic's
+  // wrong answers can be scoped to this specific attempt in Quiz History,
+  // instead of matched by topic alone — see migrate-add-attempt-id.js.
+  const attemptId = `STD${Date.now()}`;
 
   await pool.query(
-    'insert into results (outlet, name, topic, score, percentage) values ($1,$2,$3,$4,$5)',
-    [outlet, name, topic, `${score}/${total}`, `${percentage}%`]
+    'insert into results (attempt_id, outlet, name, topic, score, percentage) values ($1,$2,$3,$4,$5,$6)',
+    [attemptId, outlet, name, topic, `${score}/${total}`, `${percentage}%`]
   );
   for (const w of wrongRows) {
     await pool.query(
-      'insert into wrong_answers (outlet, staff_name, topic, question, chosen, correct) values ($1,$2,$3,$4,$5,$6)',
-      [outlet, name, topic, w.question, w.chosen, w.correct]
+      'insert into wrong_answers (attempt_id, outlet, staff_name, topic, question, chosen, correct) values ($1,$2,$3,$4,$5,$6,$7)',
+      [attemptId, outlet, name, topic, w.question, w.chosen, w.correct]
     );
   }
   res.json({ status: 'ok', score, total, percentage });
