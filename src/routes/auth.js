@@ -120,6 +120,68 @@ authRouter.post('/manager-login', async (req, res) => {
   res.json({ authorized: true, token });
 });
 
+// Register (or re-register) a personal password for one outlet/region.
+// Requires today's master PIN as proof of legitimacy — the same action
+// covers first-time signup, a forgotten password, and outlet handover to a
+// new manager, since it always overwrites whatever credential row already
+// existed rather than requiring it to be deleted first. supervisor has no
+// registration path (single shared account, out of scope). See
+// docs/superpowers/specs/2026-08-06-manager-auth-design.md.
+authRouter.post('/manager-register', async (req, res) => {
+  const role = (req.body.role || '').toString();
+  const masterPin = (req.body.masterPin || '').toString();
+  const newPassword = (req.body.newPassword || '').toString();
+  const validRoles = ['outlet_manager', 'warehouse_manager', 'area_manager'];
+  if (!validRoles.includes(role)) {
+    return res.status(400).json({ authorized: false, error: 'Unknown role.' });
+  }
+
+  let scopeKey;
+  if (role === 'area_manager') {
+    const areaId = (req.body.outlet || '').toString().trim();
+    if (!areaId || !outletsForArea(areaId)) {
+      return res.status(400).json({ authorized: false, error: 'Select a valid area.' });
+    }
+    scopeKey = areaId;
+  } else {
+    scopeKey = (req.body.outlet || '').toString().trim().toUpperCase();
+    if (!scopeKey) return res.status(400).json({ authorized: false, error: 'Select an outlet/location first.' });
+  }
+
+  if (newPassword.length < 6) {
+    return res.status(400).json({ authorized: false, error: 'Password must be at least 6 characters.' });
+  }
+
+  // Shares its lockout counter with manager-login's master-PIN fallback
+  // path (mgr_master_${role}) — a separate counter here would let an
+  // attacker double their master-PIN guess budget by alternating between
+  // logging in and registering. Same reasoning as the verify-pin +
+  // manager-login lockout unification fixed earlier.
+  const failKey = `mgr_master_${role}`;
+  if (await isLockedOut(failKey)) {
+    return res.status(429).json({ authorized: false, error: 'Too many attempts. Please wait a few minutes and try again.' });
+  }
+
+  const { rows } = await pool.query('select pin_hash from manager_pins where role = $1', [role]);
+  const match = rows[0];
+  const ok = match && masterPin && await bcrypt.compare(masterPin, match.pin_hash);
+  if (!ok) {
+    await recordFailure(failKey);
+    return res.json({ authorized: false, error: 'Incorrect master PIN.' });
+  }
+  await clearFailures(failKey);
+
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+  await pool.query(
+    `insert into manager_credentials (role, scope_key, password_hash) values ($1, $2, $3)
+     on conflict (role, scope_key) do update set password_hash = excluded.password_hash, updated_at = now()`,
+    [role, scopeKey, passwordHash]
+  );
+
+  const token = issueToken(role, scopeKey);
+  res.json({ authorized: true, token });
+});
+
 // Boolean-only PIN check, no token issued — backs vanilla index.html's two
 // standalone PIN gates that never needed a scoped session: the shared
 // Manager-category gate (role 'resources', unlocks the Outlet/Warehouse/
