@@ -1,9 +1,20 @@
 import { Router } from 'express';
+import multer from 'multer';
+import { Readable } from 'stream';
 import { env } from '../config/env.js';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireScope } from '../middleware/auth.js';
 import { getDriveClient } from '../services/drive.js';
 
 export const resourcesRouter = Router();
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB, matches content.js's upload cap
+  fileFilter: (req, file, cb) => {
+    const allowed = /^(application\/(pdf|msword|vnd\.openxmlformats-officedocument\.|vnd\.ms-)|text\/plain)/;
+    cb(null, allowed.test(file.mimetype));
+  },
+});
 
 // Company-wide, not outlet-scoped — matches GAS (every scope gets the same
 // referenceDocs). Category names match GAS's categorizeFolderName exactly;
@@ -140,4 +151,50 @@ resourcesRouter.get('/', requireAuth, async (req, res) => {
   cache = result;
   cacheAt = Date.now();
   res.json({ referenceDocs: result.docs, resourceSyncStats: result.stats });
+});
+
+// Category's own top-level folder if one already exists (matched the same
+// way the read side categorizes it), otherwise creates a fresh one — a
+// category with zero files yet has no folder to find.
+async function findOrCreateCategoryFolder(drive, category) {
+  const items = await listChildren(drive, env.referenceFolderId);
+  const existing = items.find(f => f.mimeType === FOLDER_MIME && categorizeFolderName(f.name) === category);
+  if (existing) return existing.id;
+  const created = await drive.files.create({
+    requestBody: { name: category, mimeType: FOLDER_MIME, parents: [env.referenceFolderId] },
+    fields: 'id',
+  });
+  return created.data.id;
+}
+
+// Supervisor only, matches GAS's upload_resource_file gating and the
+// Manage Resources UI's own PIN unlock (see vanilla index.html
+// unlockResourceManager). Uploads straight into the matching Drive
+// category folder — vanilla's chosen behavior over the Supabase-backed
+// Knowledge Base upload the Vue app uses, to keep exact parity with the
+// pre-migration app instead of changing what "uploading a resource" does.
+resourcesRouter.post('/upload', requireAuth, requireScope('supervisor'), upload.single('file'), async (req, res) => {
+  const category = (req.body.category || '').toString().trim();
+  if (!category) return res.status(400).json({ error: 'Category is required.' });
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file received, or the file type/size was rejected (20MB max; PDF, Word, PowerPoint, Excel, or text only).' });
+  }
+  const drive = getDriveClient();
+  if (!drive || !env.referenceFolderId) {
+    return res.status(500).json({ error: 'Resources upload is not configured on this server.' });
+  }
+
+  try {
+    const folderId = await findOrCreateCategoryFolder(drive, category);
+    const created = await drive.files.create({
+      requestBody: { name: req.file.originalname, parents: [folderId] },
+      media: { mimeType: req.file.mimetype, body: Readable.from(req.file.buffer) },
+      fields: 'id, name',
+    });
+    await trySetPublicLink(drive, created.data.id, { shareErrors: 0 });
+    cache = null; // next GET /resources picks up the new file instead of serving the stale 5-min cache
+    res.json({ status: 'ok', id: created.data.id, name: created.data.name });
+  } catch (e) {
+    res.status(502).json({ error: e.message || 'Upload failed.' });
+  }
 });

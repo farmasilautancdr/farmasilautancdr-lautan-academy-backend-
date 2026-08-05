@@ -95,3 +95,34 @@ authRouter.post('/manager-login', async (req, res) => {
   const token = issueToken(role, scopeKey);
   res.json({ authorized: true, token });
 });
+
+// Boolean-only PIN check, no token issued — backs vanilla index.html's two
+// standalone PIN gates that never needed a scoped session: the shared
+// Manager-category gate (role 'resources', unlocks the Outlet/Warehouse/
+// Area Manager/Supervisor tile picker — a real role login follows
+// separately) and the Knowledge Base manager unlock (role 'supervisor',
+// reachable from Resources without a full Supervisor login). Same
+// manager_pins table and lockout pattern as /manager-login.
+authRouter.post('/verify-pin', async (req, res) => {
+  const role = (req.body.role || '').toString();
+  const pin = (req.body.pin || '').toString();
+  const validRoles = ['outlet_manager', 'warehouse_manager', 'area_manager', 'supervisor', 'resources'];
+  if (!validRoles.includes(role)) {
+    return res.status(400).json({ authorized: false, error: 'Unknown role.' });
+  }
+
+  const failKey = `pin_${role}`;
+  if (await isLockedOut(failKey)) {
+    return res.status(429).json({ authorized: false, error: 'Too many attempts. Please wait a few minutes and try again.' });
+  }
+
+  const { rows } = await pool.query('select pin_hash from manager_pins where role = $1', [role]);
+  const match = rows[0];
+  const ok = match && pin && await bcrypt.compare(pin, match.pin_hash);
+  if (!ok) {
+    await recordFailure(failKey);
+    return res.json({ authorized: false });
+  }
+  await clearFailures(failKey);
+  res.json({ authorized: true });
+});
