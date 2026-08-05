@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
 import { pool } from '../config/db.js';
-import { issueToken } from '../middleware/auth.js';
+import { issueToken, requireAuth, requireScope } from '../middleware/auth.js';
 import { isLockedOut, recordFailure, clearFailures } from '../middleware/rateLimit.js';
 import { outletsForArea } from '../config/areas.js';
 
@@ -215,4 +215,28 @@ authRouter.post('/verify-pin', async (req, res) => {
   }
   await clearFailures(failKey);
   res.json({ authorized: true });
+});
+
+// Supervisor-only: set a new master/recovery PIN for one role. Write-only
+// — manager_pins only ever stores a bcrypt hash, so there is no "current
+// value" this could return even if it tried. See
+// docs/superpowers/specs/2026-08-06-manager-auth-design.md.
+authRouter.post('/rotate-master-pin', requireAuth, requireScope('supervisor'), async (req, res) => {
+  const role = (req.body.role || '').toString();
+  const newMasterPin = (req.body.newMasterPin || '').toString();
+  const validRoles = ['outlet_manager', 'warehouse_manager', 'area_manager'];
+  if (!validRoles.includes(role)) {
+    return res.status(400).json({ status: 'error', error: 'Unknown role.' });
+  }
+  if (!newMasterPin) {
+    return res.status(400).json({ status: 'error', error: 'Enter a new master PIN.' });
+  }
+
+  const pinHash = await bcrypt.hash(newMasterPin, 10);
+  await pool.query(
+    `insert into manager_pins (role, pin_hash) values ($1, $2)
+     on conflict (role) do update set pin_hash = excluded.pin_hash`,
+    [role, pinHash]
+  );
+  res.json({ status: 'ok' });
 });
