@@ -197,11 +197,14 @@ authRouter.post('/verify-pin', async (req, res) => {
     return res.status(400).json({ authorized: false, error: 'Unknown role.' });
   }
 
-  // Same key as /manager-login's failKey for this role, deliberately — a
-  // separate counter would let an attacker double their real attempt
-  // budget (or bypass lockout entirely) by alternating between the two
-  // endpoints for the same PIN. One shared lockout per role, not two.
-  const failKey = `mgr_${role}`;
+  // 'resources' has no manager-login counterpart, so it keeps its own
+  // counter. The other four (outlet_manager/warehouse_manager/area_manager/
+  // supervisor) verify the same manager_pins row manager-login's
+  // master-PIN-fallback path checks, so they must share ITS counter
+  // (mgr_master_${role}) — a separate one here would let an attacker double
+  // their guess budget by alternating between the two endpoints. See the
+  // matching comment on manager-login's failKey above.
+  const failKey = role === 'resources' ? 'mgr_resources' : `mgr_master_${role}`;
   if (await isLockedOut(failKey)) {
     return res.status(429).json({ authorized: false, error: 'Too many attempts. Please wait a few minutes and try again.' });
   }
@@ -230,6 +233,9 @@ authRouter.post('/rotate-master-pin', requireAuth, requireScope('supervisor'), a
   }
   if (!newMasterPin) {
     return res.status(400).json({ status: 'error', error: 'Enter a new master PIN.' });
+  }
+  if (newMasterPin.length < 6) {
+    return res.status(400).json({ status: 'error', error: 'Master PIN must be at least 6 characters.' });
   }
 
   const pinHash = await bcrypt.hash(newMasterPin, 10);
