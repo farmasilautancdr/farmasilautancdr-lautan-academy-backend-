@@ -52,7 +52,13 @@ authRouter.post('/staff-login', async (req, res) => {
   res.json({ authorized: true, token });
 });
 
-// Manager: role + PIN (+ outlet, unless supervisor) -> JWT
+// Manager: role + PIN/password (+ outlet, unless supervisor) -> JWT.
+// Outlet/Warehouse/Area Manager may have a personal per-outlet/per-region
+// password registered (manager_credentials, see /manager-register below) —
+// if so, that takes priority. Falls back to the shared master PIN in
+// manager_pins if this scope hasn't registered one yet (or always, for
+// supervisor, which has no registration path). See
+// docs/superpowers/specs/2026-08-06-manager-auth-design.md.
 authRouter.post('/manager-login', async (req, res) => {
   const role = (req.body.role || '').toString();
   const pin = (req.body.pin || '').toString();
@@ -60,20 +66,6 @@ authRouter.post('/manager-login', async (req, res) => {
   if (!validRoles.includes(role)) {
     return res.status(400).json({ authorized: false, error: 'Unknown role.' });
   }
-
-  const failKey = `mgr_${role}`;
-  if (await isLockedOut(failKey)) {
-    return res.status(429).json({ authorized: false, error: 'Too many attempts. Please wait a few minutes and try again.' });
-  }
-
-  const { rows } = await pool.query('select pin_hash from manager_pins where role = $1', [role]);
-  const match = rows[0];
-  const ok = match && pin && await bcrypt.compare(pin, match.pin_hash);
-  if (!ok) {
-    await recordFailure(failKey);
-    return res.json({ authorized: false, error: 'Incorrect password.' });
-  }
-  await clearFailures(failKey);
 
   // area_manager reuses the "outlet" field to carry the area id instead —
   // scope is the whole region's outlets, not one. Not uppercased: area ids
@@ -91,6 +83,38 @@ authRouter.post('/manager-login', async (req, res) => {
     scopeKey = (req.body.outlet || '').toString().trim().toUpperCase();
     if (!scopeKey) return res.status(400).json({ authorized: false, error: 'Select an outlet/location first.' });
   }
+
+  let credRow = null;
+  if (role !== 'supervisor') {
+    const { rows } = await pool.query(
+      'select password_hash from manager_credentials where role = $1 and scope_key = $2',
+      [role, scopeKey]
+    );
+    credRow = rows[0] || null;
+  }
+
+  // Separate lockout counters: a registered outlet's personal password is
+  // its own attack surface from the shared master PIN's — sharing one
+  // counter between them would let a wrong personal-password guess and a
+  // wrong master-PIN guess against a DIFFERENT outlet blend together.
+  const failKey = credRow ? `mgr_${role}_${scopeKey}` : `mgr_master_${role}`;
+  if (await isLockedOut(failKey)) {
+    return res.status(429).json({ authorized: false, error: 'Too many attempts. Please wait a few minutes and try again.' });
+  }
+
+  let ok;
+  if (credRow) {
+    ok = pin && await bcrypt.compare(pin, credRow.password_hash);
+  } else {
+    const { rows } = await pool.query('select pin_hash from manager_pins where role = $1', [role]);
+    const match = rows[0];
+    ok = match && pin && await bcrypt.compare(pin, match.pin_hash);
+  }
+  if (!ok) {
+    await recordFailure(failKey);
+    return res.json({ authorized: false, error: 'Incorrect password.' });
+  }
+  await clearFailures(failKey);
 
   const token = issueToken(role, scopeKey);
   res.json({ authorized: true, token });
