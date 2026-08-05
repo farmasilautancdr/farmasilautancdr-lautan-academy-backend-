@@ -173,9 +173,18 @@ async function findOrCreateCategoryFolder(drive, category) {
 // category folder — vanilla's chosen behavior over the Supabase-backed
 // Knowledge Base upload the Vue app uses, to keep exact parity with the
 // pre-migration app instead of changing what "uploading a resource" does.
+const VALID_CATEGORIES = Object.values(CATEGORY_NAMES);
+
 resourcesRouter.post('/upload', requireAuth, requireScope('supervisor'), upload.single('file'), async (req, res) => {
   const category = (req.body.category || '').toString().trim();
   if (!category) return res.status(400).json({ error: 'Category is required.' });
+  // Unvalidated category input would let findOrCreateCategoryFolder create
+  // an arbitrarily-named top-level folder in the reference Drive folder —
+  // restrict to the same fixed 6 categories the read side already
+  // recognizes, matching the vanilla UI's own dropdown options.
+  if (!VALID_CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: 'Unknown category.' });
+  }
   if (!req.file) {
     return res.status(400).json({ error: 'No file received, or the file type/size was rejected (20MB max; PDF, Word, PowerPoint, Excel, or text only).' });
   }

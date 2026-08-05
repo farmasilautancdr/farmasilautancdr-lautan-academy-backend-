@@ -111,7 +111,11 @@ authRouter.post('/verify-pin', async (req, res) => {
     return res.status(400).json({ authorized: false, error: 'Unknown role.' });
   }
 
-  const failKey = `pin_${role}`;
+  // Same key as /manager-login's failKey for this role, deliberately — a
+  // separate counter would let an attacker double their real attempt
+  // budget (or bypass lockout entirely) by alternating between the two
+  // endpoints for the same PIN. One shared lockout per role, not two.
+  const failKey = `mgr_${role}`;
   if (await isLockedOut(failKey)) {
     return res.status(429).json({ authorized: false, error: 'Too many attempts. Please wait a few minutes and try again.' });
   }
