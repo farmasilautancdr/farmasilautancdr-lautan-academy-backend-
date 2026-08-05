@@ -15,6 +15,16 @@ create table if not exists manager_pins (
   pin_hash text not null
 );
 
+create table if not exists manager_credentials (
+  id bigserial primary key,
+  role text not null,            -- 'outlet_manager' | 'warehouse_manager' | 'area_manager'
+  scope_key text not null,       -- outlet code (uppercase), or area id for area_manager
+  password_hash text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (role, scope_key)
+);
+
 create table if not exists content (
   id bigserial primary key,
   topic text not null,
