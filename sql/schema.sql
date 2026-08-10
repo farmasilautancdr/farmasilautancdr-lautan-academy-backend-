@@ -168,6 +168,16 @@ create table if not exists master_delete_log (
   created_at timestamptz not null default now()
 );
 
+-- Generic key-value settings table. First user: Master Subsystem D's
+-- maintenance kill-switch (key='maintenance', value={enabled,message}).
+-- Reusable by future subsystems without another migration.
+create table if not exists system_settings (
+  key text primary key,
+  value jsonb not null,
+  updated_by text,
+  updated_at timestamptz not null default now()
+);
+
 create index if not exists idx_results_outlet_name on results (outlet, name);
 create index if not exists idx_ai_results_outlet_name on ai_results (outlet, name);
 create index if not exists idx_ai_quizzes_passcode on ai_quizzes (passcode);
