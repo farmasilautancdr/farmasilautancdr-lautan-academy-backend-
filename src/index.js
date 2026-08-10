@@ -10,11 +10,13 @@ import { staffRouter } from './routes/staff.js';
 import { resourcesRouter } from './routes/resources.js';
 import { questionsRouter } from './routes/questions.js';
 import { masterPurgeRouter } from './routes/masterPurge.js';
+import { maintenanceRouter } from './routes/maintenance.js';
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
+app.use(maintenanceRouter);
 app.use('/auth', authRouter);
 app.use('/quiz', quizRouter);
 app.use('/data', dataRouter);
