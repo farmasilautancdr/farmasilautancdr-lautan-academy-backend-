@@ -156,6 +156,18 @@ create table if not exists rate_limits (
   expires_at timestamptz not null
 );
 
+-- Interim audit trail for Master Subsystem C (test-data purge/hard delete)
+-- until Subsystem E (full audit logs) exists. One row per delete call,
+-- written inside the same transaction as the delete itself.
+create table if not exists master_delete_log (
+  id bigserial primary key,
+  master_username text not null,
+  entity_type text not null,       -- 'staff' | 'quiz_attempt' | 'manager_account' | 'report' | 'content'
+  summary text not null,
+  deleted_count int not null,
+  created_at timestamptz not null default now()
+);
+
 create index if not exists idx_results_outlet_name on results (outlet, name);
 create index if not exists idx_ai_results_outlet_name on ai_results (outlet, name);
 create index if not exists idx_ai_quizzes_passcode on ai_quizzes (passcode);
