@@ -228,3 +228,73 @@ masterPurgeRouter.post('/manager-accounts/delete', requireAuth, requireMaster, a
     res.status(500).json({ status: 'error', error: err.message || 'Delete failed.' });
   }
 });
+
+masterPurgeRouter.get('/reports/search', requireAuth, requireMaster, async (req, res) => {
+  const outlet = (req.query.outlet || '').toString().trim().toUpperCase();
+  const staffName = (req.query.staffName || '').toString().trim().toUpperCase();
+  const topic = (req.query.topic || '').toString().trim();
+
+  const conditions = [];
+  const params = [];
+  if (outlet) { params.push(outlet); conditions.push(`outlet = $${params.length}`); }
+  if (staffName) { params.push(`%${staffName}%`); conditions.push(`staff_name like $${params.length}`); }
+  if (topic) { params.push(`%${topic}%`); conditions.push(`topic like $${params.length}`); }
+  const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
+
+  const { rows } = await pool.query(
+    `select id, outlet, staff_name, manager, topic, created_at from reports ${where} order by created_at desc limit 200`,
+    params
+  );
+  res.json({ reports: rows.map(r => ({ id: r.id, outlet: r.outlet, staffName: r.staff_name, manager: r.manager, topic: r.topic, createdAt: r.created_at })) });
+});
+
+masterPurgeRouter.post('/reports/delete', requireAuth, requireMaster, async (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
+  if (!ids.length) return res.status(400).json({ status: 'error', error: 'No reports selected.' });
+
+  try {
+    const result = await withTransaction(async (client) => {
+      const { rowCount } = await client.query('delete from reports where id = ANY($1::bigint[])', [ids]);
+      if (!rowCount) throw new Error('No matching reports found.');
+      await logDelete(client, req.session.scopeKey, 'report', `Deleted ${rowCount} report(s)`, rowCount);
+      return { deletedCount: rowCount };
+    });
+    res.json({ status: 'ok', deletedCount: result.deletedCount });
+  } catch (err) {
+    res.status(500).json({ status: 'error', error: err.message || 'Delete failed.' });
+  }
+});
+
+masterPurgeRouter.get('/content/search', requireAuth, requireMaster, async (req, res) => {
+  const category = (req.query.category || '').toString().trim();
+  const topic = (req.query.topic || '').toString().trim();
+
+  const conditions = [];
+  const params = [];
+  if (category) { params.push(`%${category}%`); conditions.push(`category like $${params.length}`); }
+  if (topic) { params.push(`%${topic}%`); conditions.push(`topic like $${params.length}`); }
+  const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
+
+  const { rows } = await pool.query(
+    `select id, topic, category, title, created_at from content ${where} order by topic, title limit 200`,
+    params
+  );
+  res.json({ content: rows.map(r => ({ id: r.id, topic: r.topic, category: r.category, title: r.title, createdAt: r.created_at })) });
+});
+
+masterPurgeRouter.post('/content/delete', requireAuth, requireMaster, async (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
+  if (!ids.length) return res.status(400).json({ status: 'error', error: 'No content entries selected.' });
+
+  try {
+    const result = await withTransaction(async (client) => {
+      const { rowCount } = await client.query('delete from content where id = ANY($1::bigint[])', [ids]);
+      if (!rowCount) throw new Error('No matching content entries found.');
+      await logDelete(client, req.session.scopeKey, 'content', `Deleted ${rowCount} content entry(ies)`, rowCount);
+      return { deletedCount: rowCount };
+    });
+    res.json({ status: 'ok', deletedCount: result.deletedCount });
+  } catch (err) {
+    res.status(500).json({ status: 'error', error: err.message || 'Delete failed.' });
+  }
+});
