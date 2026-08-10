@@ -1,3 +1,6 @@
+// Trivial no-op comment — verifying Railway's GitHub deploy trigger after
+// re-connecting the service source (see MEMORY.md, deploy pipeline
+// fragility). Safe to remove once confirmed.
 import express from 'express';
 import cors from 'cors';
 import { env } from './config/env.js';
