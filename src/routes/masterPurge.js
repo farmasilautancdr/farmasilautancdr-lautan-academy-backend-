@@ -106,3 +106,72 @@ masterPurgeRouter.post('/staff/delete', requireAuth, requireMaster, async (req, 
     res.status(500).json({ status: 'error', error: err.message || 'Delete failed.' });
   }
 });
+
+masterPurgeRouter.get('/quiz-attempts/search', requireAuth, requireMaster, async (req, res) => {
+  const type = req.query.type === 'ai' ? 'ai' : 'standard';
+  const table = type === 'ai' ? 'ai_results' : 'results';
+  const outlet = (req.query.outlet || '').toString().trim().toUpperCase();
+  const name = (req.query.name || '').toString().trim().toUpperCase();
+  const topic = (req.query.topic || '').toString().trim();
+  const dateFrom = (req.query.dateFrom || '').toString().trim();
+  const dateTo = (req.query.dateTo || '').toString().trim();
+
+  const conditions = [];
+  const params = [];
+  if (outlet) { params.push(outlet); conditions.push(`outlet = $${params.length}`); }
+  if (name) { params.push(`%${name}%`); conditions.push(`name like $${params.length}`); }
+  if (topic) { params.push(`%${topic}%`); conditions.push(`topic like $${params.length}`); }
+  if (dateFrom) { params.push(dateFrom); conditions.push(`created_at >= $${params.length}`); }
+  if (dateTo) { params.push(dateTo); conditions.push(`created_at <= $${params.length}`); }
+  const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
+
+  const { rows } = await pool.query(
+    `select id, attempt_id, outlet, name, topic, score, percentage, created_at from ${table} ${where} order by created_at desc limit 200`,
+    params
+  );
+  res.json({
+    attempts: rows.map(r => ({
+      id: r.id, attemptId: r.attempt_id, outlet: r.outlet, name: r.name, topic: r.topic,
+      score: r.score, percentage: r.percentage, createdAt: r.created_at, hasAttemptId: !!r.attempt_id,
+    })),
+  });
+});
+
+masterPurgeRouter.post('/quiz-attempts/delete', requireAuth, requireMaster, async (req, res) => {
+  const type = req.body.type === 'ai' ? 'ai' : 'standard';
+  const resultsTable = type === 'ai' ? 'ai_results' : 'results';
+  const wrongTable = type === 'ai' ? 'ai_wrong_answers' : 'wrong_answers';
+  const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
+  if (!ids.length) return res.status(400).json({ status: 'error', error: 'No attempts selected.' });
+
+  try {
+    const result = await withTransaction(async (client) => {
+      const { rows: attemptRows } = await client.query(
+        `select id, attempt_id, outlet, name, topic from ${resultsTable} where id = ANY($1::bigint[])`,
+        [ids]
+      );
+      if (!attemptRows.length) throw new Error('No matching attempts found.');
+
+      let totalDeleted = 0;
+      let legacyCount = 0;
+      for (const a of attemptRows) {
+        if (a.attempt_id) {
+          const rw = await client.query(`delete from ${wrongTable} where attempt_id=$1`, [a.attempt_id]);
+          totalDeleted += rw.rowCount;
+        } else {
+          legacyCount += 1;
+        }
+        const rr = await client.query(`delete from ${resultsTable} where id=$1`, [a.id]);
+        totalDeleted += rr.rowCount;
+      }
+
+      const summary = `Deleted ${attemptRows.length} ${type} quiz attempt(s)` + (legacyCount ? ` (${legacyCount} legacy, wrong answers left in place)` : '');
+      await logDelete(client, req.session.scopeKey, 'quiz_attempt', summary, totalDeleted);
+      return { deletedCount: totalDeleted };
+    });
+
+    res.json({ status: 'ok', deletedCount: result.deletedCount });
+  } catch (err) {
+    res.status(500).json({ status: 'error', error: err.message || 'Delete failed.' });
+  }
+});
