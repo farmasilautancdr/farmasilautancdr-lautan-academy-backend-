@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
 import { pool } from '../config/db.js';
-import { issueToken, requireAuth, requireScope } from '../middleware/auth.js';
+import { issueToken, issueMasterToken, requireAuth, requireMaster, requireScope } from '../middleware/auth.js';
 import { isLockedOut, recordFailure, clearFailures } from '../middleware/rateLimit.js';
 import { outletsForArea } from '../config/areas.js';
 
@@ -245,4 +245,29 @@ authRouter.post('/rotate-master-pin', requireAuth, requireScope('supervisor'), a
     [role, pinHash]
   );
   res.json({ status: 'ok' });
+});
+
+// Master User login — fully independent of staff/manager auth (no
+// scope_key/outlet, no relation to manager_pins/manager_credentials).
+// See docs/superpowers/specs/2026-08-10-master-admin-subsystem-a-design.md.
+authRouter.post('/master-login', async (req, res) => {
+  const username = (req.body.username || '').toString().trim();
+  const password = (req.body.password || '').toString();
+
+  const failKey = `master_${username}`;
+  if (await isLockedOut(failKey)) {
+    return res.status(429).json({ authorized: false, error: 'Too many attempts. Please wait a few minutes and try again.' });
+  }
+
+  const { rows } = await pool.query('select password_hash from master_users where username = $1', [username]);
+  const match = rows[0];
+  const ok = match && password && await bcrypt.compare(password, match.password_hash);
+  if (!ok) {
+    await recordFailure(failKey);
+    return res.json({ authorized: false, error: 'Incorrect username or password.' });
+  }
+  await clearFailures(failKey);
+
+  const token = issueMasterToken(username);
+  res.json({ authorized: true, token });
 });
