@@ -175,3 +175,56 @@ masterPurgeRouter.post('/quiz-attempts/delete', requireAuth, requireMaster, asyn
     res.status(500).json({ status: 'error', error: err.message || 'Delete failed.' });
   }
 });
+
+// manager_pins (the shared role-level PIN) is deliberately excluded — see
+// docs/superpowers/specs/2026-08-11-master-subsystem-c-design.md. Only
+// manager_credentials (per-outlet/area personal accounts) are deletable,
+// and only for these 3 roles (supervisor/resources have no per-account rows).
+const MANAGER_PURGE_ROLES = ['outlet_manager', 'warehouse_manager', 'area_manager'];
+
+masterPurgeRouter.get('/manager-accounts/search', requireAuth, requireMaster, async (req, res) => {
+  const role = (req.query.role || '').toString().trim();
+  const scopeKey = (req.query.scopeKey || '').toString().trim().toUpperCase();
+
+  const conditions = [];
+  const params = [];
+  if (role && MANAGER_PURGE_ROLES.includes(role)) {
+    params.push(role);
+    conditions.push(`role = $${params.length}`);
+  } else {
+    params.push(MANAGER_PURGE_ROLES);
+    conditions.push(`role = ANY($${params.length})`);
+  }
+  if (scopeKey) { params.push(`%${scopeKey}%`); conditions.push(`scope_key like $${params.length}`); }
+  const where = `where ${conditions.join(' and ')}`;
+
+  const { rows } = await pool.query(
+    `select id, role, scope_key, created_at from manager_credentials ${where} order by role, scope_key`,
+    params
+  );
+  res.json({ accounts: rows.map(r => ({ id: r.id, role: r.role, scopeKey: r.scope_key, createdAt: r.created_at })) });
+});
+
+masterPurgeRouter.post('/manager-accounts/delete', requireAuth, requireMaster, async (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
+  if (!ids.length) return res.status(400).json({ status: 'error', error: 'No accounts selected.' });
+
+  try {
+    const result = await withTransaction(async (client) => {
+      const { rows } = await client.query(
+        'select id, role, scope_key from manager_credentials where id = ANY($1::bigint[]) and role = ANY($2)',
+        [ids, MANAGER_PURGE_ROLES]
+      );
+      if (!rows.length) throw new Error('No matching manager accounts found.');
+
+      const { rowCount } = await client.query('delete from manager_credentials where id = ANY($1::bigint[])', [rows.map(r => r.id)]);
+      const summary = `Deleted ${rowCount} manager account(s): ${rows.map(r => `${r.role}/${r.scope_key}`).join(', ')}`;
+      await logDelete(client, req.session.scopeKey, 'manager_account', summary, rowCount);
+      return { deletedCount: rowCount };
+    });
+
+    res.json({ status: 'ok', deletedCount: result.deletedCount });
+  } catch (err) {
+    res.status(500).json({ status: 'error', error: err.message || 'Delete failed.' });
+  }
+});
