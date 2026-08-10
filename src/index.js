@@ -1,4 +1,3 @@
-// Auto-deploy retest after fixing Railway's GitHub App repo access.
 import express from 'express';
 import cors from 'cors';
 import { env } from './config/env.js';
