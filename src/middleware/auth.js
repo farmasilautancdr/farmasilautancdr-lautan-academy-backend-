@@ -5,6 +5,13 @@ export function issueToken(scopeType, scopeKey) {
   return jwt.sign({ scopeType, scopeKey }, env.jwtSecret, { expiresIn: '12h' });
 }
 
+// Separate signer from issueToken: shorter expiry since this is an
+// elevated-privilege session, not a daily-driver login. See
+// docs/superpowers/specs/2026-08-10-master-admin-subsystem-a-design.md.
+export function issueMasterToken(username) {
+  return jwt.sign({ scopeType: 'master', scopeKey: username }, env.jwtSecret, { expiresIn: '2h' });
+}
+
 export function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : req.body.token;
@@ -27,4 +34,14 @@ export function requireScope(...allowedScopeTypes) {
     }
     next();
   };
+}
+
+// Strict single-scope check for Master-only routes (subsystems B-H build
+// on this). requireScope('master') would also work, but this reads more
+// clearly at every Master-only call site.
+export function requireMaster(req, res, next) {
+  if (req.session?.scopeType !== 'master') {
+    return res.status(403).json({ authorized: false, error: 'Not authorized for this action.' });
+  }
+  next();
 }
