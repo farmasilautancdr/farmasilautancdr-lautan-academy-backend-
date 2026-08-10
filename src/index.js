@@ -11,6 +11,7 @@ import { resourcesRouter } from './routes/resources.js';
 import { questionsRouter } from './routes/questions.js';
 import { masterPurgeRouter } from './routes/masterPurge.js';
 import { maintenanceRouter } from './routes/maintenance.js';
+import { checkMaintenance } from './middleware/auth.js';
 
 const app = express();
 app.use(cors());
@@ -18,13 +19,13 @@ app.use(express.json());
 
 app.use(maintenanceRouter);
 app.use('/auth', authRouter);
-app.use('/quiz', quizRouter);
-app.use('/data', dataRouter);
-app.use('/content', contentRouter);
-app.use('/reports', reportsRouter);
-app.use('/staff-roster-manage', staffRouter);
-app.use('/resources', resourcesRouter);
-app.use('/questions', questionsRouter);
+app.use('/quiz', checkMaintenance, quizRouter);
+app.use('/data', checkMaintenance, dataRouter);
+app.use('/content', checkMaintenance, contentRouter);
+app.use('/reports', checkMaintenance, reportsRouter);
+app.use('/staff-roster-manage', checkMaintenance, staffRouter);
+app.use('/resources', checkMaintenance, resourcesRouter);
+app.use('/questions', checkMaintenance, questionsRouter);
 app.use('/master/purge', masterPurgeRouter);
 
 app.get('/health', (req, res) => res.json({ ok: true }));

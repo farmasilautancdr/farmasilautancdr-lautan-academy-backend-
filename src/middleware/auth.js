@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env.js';
+import { pool } from '../config/db.js';
 
 export function issueToken(scopeType, scopeKey) {
   return jwt.sign({ scopeType, scopeKey }, env.jwtSecret, { expiresIn: '12h' });
@@ -44,4 +45,27 @@ export function requireMaster(req, res, next) {
     return res.status(403).json({ authorized: false, error: 'Not authorized for this action.' });
   }
   next();
+}
+
+// Global kill-switch check, applied to every router except /auth and
+// /master/* (Master must always be able to log in and turn this back off).
+// Fails open on a DB error — a hiccup reading this flag must not become a
+// second outage on top of whatever the switch was meant to guard against.
+// See docs/superpowers/specs/2026-08-11-master-subsystem-d-design.md.
+export async function checkMaintenance(req, res, next) {
+  try {
+    const { rows } = await pool.query(`select value from system_settings where key = 'maintenance'`);
+    const value = rows[0]?.value;
+    if (value?.enabled === true) {
+      return res.status(503).json({
+        authorized: false,
+        maintenance: true,
+        message: value.message || '',
+      });
+    }
+    next();
+  } catch (err) {
+    console.error('checkMaintenance query failed, failing open:', err.message);
+    next();
+  }
 }
