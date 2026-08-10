@@ -247,6 +247,41 @@ authRouter.post('/rotate-master-pin', requireAuth, requireScope('supervisor'), a
   res.json({ status: 'ok' });
 });
 
+// Master-only: set a new shared PIN for the Supervisor role. Supervisor is
+// the one role with no existing recovery path — rotate-master-pin and
+// manager-register both explicitly exclude it (Supervisor is the one who
+// grants those, so it can't grant itself). Gated by requireMaster alone,
+// not requireScope — Master's own auth is sufficient proof, this doesn't
+// touch manager_credentials or any other role's manager_pins row. See
+// docs/superpowers/specs/2026-08-11-master-subsystem-b-design.md.
+authRouter.post('/master-reset-supervisor-pin', requireAuth, requireMaster, async (req, res) => {
+  const newPin = (req.body.newPin || '').toString();
+
+  // Failures here are validation failures (bad input), not a wrong-guess —
+  // still counted so a leaked/compromised master token can't be hammered
+  // against this endpoint indefinitely. Keyed to the master username in
+  // the JWT (scopeKey on a 'master' token), not shared with any other
+  // counter.
+  const failKey = `master_reset_supervisor_${req.session.scopeKey}`;
+  if (await isLockedOut(failKey)) {
+    return res.status(429).json({ status: 'error', error: 'Too many attempts. Please wait a few minutes and try again.' });
+  }
+
+  if (newPin.length < 6) {
+    await recordFailure(failKey);
+    return res.status(400).json({ status: 'error', error: 'PIN must be at least 6 characters.' });
+  }
+  await clearFailures(failKey);
+
+  const pinHash = await bcrypt.hash(newPin, 10);
+  await pool.query(
+    `insert into manager_pins (role, pin_hash) values ('supervisor', $1)
+     on conflict (role) do update set pin_hash = excluded.pin_hash`,
+    [pinHash]
+  );
+  res.json({ status: 'ok' });
+});
+
 // Master User login — fully independent of staff/manager auth (no
 // scope_key/outlet, no relation to manager_pins/manager_credentials).
 // See docs/superpowers/specs/2026-08-10-master-admin-subsystem-a-design.md.
