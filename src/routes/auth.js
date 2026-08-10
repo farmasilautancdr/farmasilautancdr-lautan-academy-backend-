@@ -16,10 +16,10 @@ authRouter.get('/staff-roster', async (req, res) => {
   if (!division || !outlet) return res.json({ staff: [] });
 
   const { rows } = await pool.query(
-    'select name from staff_roster where division = $1 and outlet = $2 order by name',
+    'select name, id_note from staff_roster where division = $1 and outlet = $2 order by name',
     [division, outlet]
   );
-  res.json({ staff: rows.map(r => r.name) });
+  res.json({ staff: rows.map(r => ({ name: r.name, idNote: r.id_note || null })) });
 });
 
 // Staff: division + outlet + name + PIN -> JWT scoped to staff_retail/staff_warehouse
