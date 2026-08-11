@@ -156,17 +156,20 @@ create table if not exists rate_limits (
   expires_at timestamptz not null
 );
 
--- Interim audit trail for Master Subsystem C (test-data purge/hard delete)
--- until Subsystem E (full audit logs) exists. One row per delete call,
--- written inside the same transaction as the delete itself.
-create table if not exists master_delete_log (
+-- Audit trail for all privileged/admin actions (Master Subsystem E) —
+-- superseded master_delete_log (Subsystem C's interim version, migrated
+-- and dropped). One row per logged action, written best-effort (fails
+-- open for standalone routes, part of the transaction for purge routes).
+create table if not exists audit_log (
   id bigserial primary key,
-  master_username text not null,
-  entity_type text not null,       -- 'staff' | 'quiz_attempt' | 'manager_account' | 'report' | 'content'
+  actor_type text not null,        -- 'master' | 'outlet_manager' | 'warehouse_manager' | 'area_manager' | 'supervisor'
+  actor_key text not null,         -- master username | outlet code | area id | 'ALL'
+  action text not null,            -- e.g. 'staff.add', 'content.delete', 'purge.staff', 'master.login'
   summary text not null,
-  deleted_count int not null,
+  affected_count integer,
   created_at timestamptz not null default now()
 );
+create index if not exists audit_log_created_at_idx on audit_log (created_at desc);
 
 -- Generic key-value settings table. First user: Master Subsystem D's
 -- maintenance kill-switch (key='maintenance', value={enabled,message}).
