@@ -5,21 +5,33 @@ import { isRevoked } from '../services/sessionRevocationCache.js';
 
 // 12h matches this project's existing staff/manager JWT lifetime — kept as
 // one constant so the DB row's expires_at and the JWT's own expiresIn can
-// never drift apart.
-const SESSION_TTL_HOURS = 12;
+// never drift apart. Expressed in minutes (not hours) so Master Subsystem
+// H's shorter 30-minute impersonation lifetime uses the exact same
+// interval/expiresIn construction — jsonwebtoken's expiresIn string is
+// parsed by the `ms` package, which does not reliably parse a fractional-
+// hour string like "0.5h".
+const SESSION_TTL_MINUTES = 12 * 60;
 
-export async function issueToken(scopeType, scopeKey) {
+// opts.expiresInMinutes / opts.impersonatedBy are used only by Master
+// Subsystem H's impersonation flow (routes/masterImpersonate.js) — every
+// existing caller passes neither and gets the same 12h/untagged behavior
+// as before. See docs/superpowers/specs/2026-08-11-master-subsystem-h-design.md.
+export async function issueToken(scopeType, scopeKey, opts = {}) {
+  const ttlMinutes = opts.expiresInMinutes || SESSION_TTL_MINUTES;
+  const impersonatedBy = opts.impersonatedBy || null;
   const { rows } = await pool.query(
-    `insert into sessions (scope_type, scope_key, expires_at)
-     values ($1, $2, now() + interval '${SESSION_TTL_HOURS} hours')
+    `insert into sessions (scope_type, scope_key, expires_at, impersonated_by)
+     values ($1, $2, now() + interval '${ttlMinutes} minutes', $3)
      returning id`,
-    [scopeType, scopeKey]
+    [scopeType, scopeKey, impersonatedBy]
   );
   // bigserial comes back as a JS string from node-pg — keep it a string all
   // the way through (JWT claim, revocation cache, revoke-route params). See
   // this file's Global Constraints note on the standard_questions.id bug.
   const sid = rows[0].id;
-  return jwt.sign({ scopeType, scopeKey, sid }, env.jwtSecret, { expiresIn: `${SESSION_TTL_HOURS}h` });
+  const claims = { scopeType, scopeKey, sid };
+  if (impersonatedBy) claims.impersonated = true;
+  return jwt.sign(claims, env.jwtSecret, { expiresIn: `${ttlMinutes}m` });
 }
 
 // Separate signer from issueToken: shorter expiry since this is an
@@ -40,6 +52,13 @@ export function requireAuth(req, res, next) {
     // force-logged-out client needs no new frontend error handling.
     if (req.session.scopeType !== 'master' && isRevoked(req.session.sid)) {
       return res.status(401).json({ authorized: false, error: 'Your session has expired — please log in again.' });
+    }
+    // Master Subsystem H: impersonation tokens are view-only. This is the
+    // single enforcement point — every authenticated route already runs
+    // through requireAuth, so no per-route edits are needed. See
+    // docs/superpowers/specs/2026-08-11-master-subsystem-h-design.md.
+    if (req.session.impersonated && req.method !== 'GET') {
+      return res.status(403).json({ authorized: false, error: 'View-only — action not permitted while impersonating.' });
     }
     next();
   } catch (e) {
