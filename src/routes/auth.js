@@ -3,7 +3,10 @@ import bcrypt from 'bcrypt';
 import { pool } from '../config/db.js';
 import { issueToken, issueMasterToken, requireAuth, requireMaster, requireScope } from '../middleware/auth.js';
 import { isLockedOut, recordFailure, clearFailures } from '../middleware/rateLimit.js';
-import { outletsForArea } from '../config/areas.js';
+async function areaExists(areaId) {
+  const { rows } = await pool.query('select 1 from areas where id = $1 and active', [areaId]);
+  return rows.length > 0;
+}
 import { logAuditSafe } from '../services/auditLog.js';
 
 export const authRouter = Router();
@@ -76,7 +79,7 @@ authRouter.post('/manager-login', async (req, res) => {
     scopeKey = 'ALL';
   } else if (role === 'area_manager') {
     const areaId = (req.body.outlet || '').toString().trim();
-    if (!areaId || !outletsForArea(areaId)) {
+    if (!areaId || !(await areaExists(areaId))) {
       return res.status(400).json({ authorized: false, error: 'Select a valid area.' });
     }
     scopeKey = areaId;
@@ -140,7 +143,7 @@ authRouter.post('/manager-register', async (req, res) => {
   let scopeKey;
   if (role === 'area_manager') {
     const areaId = (req.body.outlet || '').toString().trim();
-    if (!areaId || !outletsForArea(areaId)) {
+    if (!areaId || !(await areaExists(areaId))) {
       return res.status(400).json({ authorized: false, error: 'Select a valid area.' });
     }
     scopeKey = areaId;
