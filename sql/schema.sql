@@ -206,3 +206,30 @@ create index if not exists idx_ai_results_outlet_name on ai_results (outlet, nam
 create index if not exists idx_ai_quizzes_passcode on ai_quizzes (passcode);
 create index if not exists idx_standard_questions_topic on standard_questions (topic);
 create index if not exists idx_rate_limits_expires_at on rate_limits (expires_at);
+
+-- Outlet/Area Management. Replaces the hardcoded AREAS/OUTLET_LIST/
+-- WAREHOUSE_LOCATIONS arrays previously duplicated across this backend's
+-- config/areas.js and 10+ frontend files — Master edits these from the
+-- Control Panel now instead of a code change + redeploy. Soft-delete only
+-- (active boolean); store_outlets.code has no rename endpoint since staff_roster/
+-- results/reports/etc. all reference it by free text. Named store_outlets,
+-- not outlets — this Supabase project already has an unrelated `outlets`
+-- table (dependent staff/quizzes/attempts/manager_reviews tables belonging
+-- to a different app, none matching this file's own schema) sharing the
+-- same DB. Not touched, same reasoning as standard_questions above. See
+-- docs/superpowers/specs/2026-08-11-outlet-management-design.md.
+create table if not exists areas (
+  id text primary key,
+  label text not null,
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists store_outlets (
+  code text primary key,
+  division text not null,        -- 'retail' | 'warehouse'
+  area_id text references areas(id),  -- null for warehouse
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+create index if not exists store_outlets_area_idx on store_outlets (area_id);
