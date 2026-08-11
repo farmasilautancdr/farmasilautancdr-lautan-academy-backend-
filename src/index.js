@@ -14,6 +14,7 @@ import { maintenanceRouter } from './routes/maintenance.js';
 import { auditLogRouter } from './routes/auditLog.js';
 import { masterBackupRouter } from './routes/masterBackup.js';
 import { masterSessionsRouter } from './routes/masterSessions.js';
+import { masterImpersonateRouter } from './routes/masterImpersonate.js';
 import { startSessionMaintenanceLoop } from './services/sessionRevocationCache.js';
 import { checkMaintenance } from './middleware/auth.js';
 
@@ -33,6 +34,7 @@ app.use('/questions', checkMaintenance, questionsRouter);
 app.use('/master/purge', masterPurgeRouter);
 app.use('/master/audit-log', auditLogRouter);
 app.use('/master/sessions', masterSessionsRouter);
+app.use('/master/impersonate', masterImpersonateRouter);
 app.use(masterBackupRouter);
 
 app.get('/health', (req, res) => res.json({ ok: true }));
