@@ -9,7 +9,13 @@ import { extractText } from './textExtract.js';
 
 export function getDriveClient() {
   if (!env.googleServiceAccountJson) return null;
-  const credentials = JSON.parse(env.googleServiceAccountJson);
+  let credentials;
+  try {
+    credentials = JSON.parse(env.googleServiceAccountJson);
+  } catch (e) {
+    console.error('GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON:', e.message);
+    return null;
+  }
   const auth = new google.auth.GoogleAuth({ credentials, scopes: ['https://www.googleapis.com/auth/drive'] });
   return google.drive({ version: 'v3', auth });
 }
