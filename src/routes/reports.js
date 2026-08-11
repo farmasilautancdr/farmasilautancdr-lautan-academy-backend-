@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { pool } from '../config/db.js';
 import { requireAuth, requireScope } from '../middleware/auth.js';
 import { outletsForArea } from '../config/areas.js';
+import { logAuditSafe } from '../services/auditLog.js';
 
 export const reportsRouter = Router();
 
@@ -59,6 +60,12 @@ reportsRouter.post('/', requireAuth, requireScope('area_manager'), async (req, r
        where outlet=$1 and staff_name=$2 and topic=$4`,
       fields
     );
+    logAuditSafe({
+      actorType: req.session.scopeType,
+      actorKey: req.session.scopeKey,
+      action: 'report.update',
+      summary: `Updated report ${outlet}/${staffName} (${topic})`,
+    });
     return res.json({ status: 'updated' });
   }
 
@@ -67,5 +74,11 @@ reportsRouter.post('/', requireAuth, requireScope('area_manager'), async (req, r
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
     fields
   );
+  logAuditSafe({
+    actorType: req.session.scopeType,
+    actorKey: req.session.scopeKey,
+    action: 'report.create',
+    summary: `Filed report ${outlet}/${staffName} (${topic})`,
+  });
   res.json({ status: 'created' });
 });
