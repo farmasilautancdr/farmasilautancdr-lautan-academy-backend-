@@ -194,6 +194,7 @@ create table if not exists sessions (
   expires_at timestamptz not null,
   revoked_at timestamptz,
   revoked_by text,
+  impersonated_by text,
   ip text,
   user_agent text
 );
