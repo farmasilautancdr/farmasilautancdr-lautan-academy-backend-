@@ -10,6 +10,7 @@ import { staffRouter } from './routes/staff.js';
 import { resourcesRouter } from './routes/resources.js';
 import { questionsRouter } from './routes/questions.js';
 import { outletsRouter, areasRouter } from './routes/outlets.js';
+import { masterOutletsRouter } from './routes/masterOutlets.js';
 import { masterPurgeRouter } from './routes/masterPurge.js';
 import { maintenanceRouter } from './routes/maintenance.js';
 import { auditLogRouter } from './routes/auditLog.js';
@@ -38,6 +39,7 @@ app.use('/master/purge', masterPurgeRouter);
 app.use('/master/audit-log', auditLogRouter);
 app.use('/master/sessions', masterSessionsRouter);
 app.use('/master/impersonate', masterImpersonateRouter);
+app.use('/master/outlets', masterOutletsRouter);
 app.use(masterBackupRouter);
 
 app.get('/health', (req, res) => res.json({ ok: true }));
