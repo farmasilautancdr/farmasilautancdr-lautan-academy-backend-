@@ -2,6 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcrypt';
 import { pool } from '../config/db.js';
 import { requireAuth, requireScope } from '../middleware/auth.js';
+import { logAuditSafe } from '../services/auditLog.js';
 
 export const staffRouter = Router();
 
@@ -59,6 +60,12 @@ staffRouter.post('/', requireAuth, requireScope('outlet_manager', 'warehouse_man
     'insert into staff_roster (division, outlet, name, pin_hash, id_note, added_by) values ($1,$2,$3,$4,$5,$6)',
     [division, outlet, name, pinHash, idNote, addedBy]
   );
+  logAuditSafe({
+    actorType: req.session.scopeType,
+    actorKey: req.session.scopeKey,
+    action: 'staff.add',
+    summary: `Added staff ${outlet}/${name}`,
+  });
   res.json({ status: 'ok' });
 });
 
@@ -81,6 +88,12 @@ staffRouter.post('/reset-pin', requireAuth, requireScope('outlet_manager', 'ware
     [division, outlet, name, pinHash]
   );
   if (!rowCount) return res.status(404).json({ status: 'error', error: 'Staff member not found.' });
+  logAuditSafe({
+    actorType: req.session.scopeType,
+    actorKey: req.session.scopeKey,
+    action: 'staff.reset_pin',
+    summary: `Reset PIN for ${outlet}/${name}`,
+  });
   res.json({ status: 'ok' });
 });
 
@@ -91,5 +104,11 @@ staffRouter.delete('/', requireAuth, requireScope('outlet_manager', 'warehouse_m
   if (!checkOutletScope(req, res, division, outlet)) return;
 
   await pool.query('delete from staff_roster where division=$1 and outlet=$2 and name=$3', [division, outlet, name]);
+  logAuditSafe({
+    actorType: req.session.scopeType,
+    actorKey: req.session.scopeKey,
+    action: 'staff.delete',
+    summary: `Removed staff ${outlet}/${name}`,
+  });
   res.json({ status: 'ok' });
 });
