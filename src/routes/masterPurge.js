@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../config/db.js';
 import { requireAuth, requireMaster } from '../middleware/auth.js';
+import { logAudit } from '../services/auditLog.js';
 
 export const masterPurgeRouter = Router();
 
@@ -21,13 +22,6 @@ async function withTransaction(fn) {
   } finally {
     client.release();
   }
-}
-
-async function logDelete(client, masterUsername, entityType, summary, deletedCount) {
-  await client.query(
-    'insert into master_delete_log (master_username, entity_type, summary, deleted_count) values ($1,$2,$3,$4)',
-    [masterUsername, entityType, summary, deletedCount]
-  );
 }
 
 // staff_roster has no FK to results/wrong_answers/ai_results/ai_wrong_answers/
@@ -97,7 +91,7 @@ masterPurgeRouter.post('/staff/delete', requireAuth, requireMaster, async (req, 
       }
 
       const summary = `Deleted ${staffRows.length} staff account(s): ${names.join(', ')}`;
-      await logDelete(client, req.session.scopeKey, 'staff', summary, totalDeleted);
+      await logAudit(client, { actorType: 'master', actorKey: req.session.scopeKey, action: 'purge.staff', summary, affectedCount: totalDeleted });
       return { deletedCount: totalDeleted };
     });
 
@@ -166,7 +160,7 @@ masterPurgeRouter.post('/quiz-attempts/delete', requireAuth, requireMaster, asyn
       }
 
       const summary = `Deleted ${attemptRows.length} ${type} quiz attempt(s)` + (legacyCount ? ` (${legacyCount} legacy, wrong answers left in place)` : '');
-      await logDelete(client, req.session.scopeKey, 'quiz_attempt', summary, totalDeleted);
+      await logAudit(client, { actorType: 'master', actorKey: req.session.scopeKey, action: 'purge.quiz_attempt', summary, affectedCount: totalDeleted });
       return { deletedCount: totalDeleted };
     });
 
@@ -219,7 +213,7 @@ masterPurgeRouter.post('/manager-accounts/delete', requireAuth, requireMaster, a
 
       const { rowCount } = await client.query('delete from manager_credentials where id = ANY($1::bigint[])', [rows.map(r => r.id)]);
       const summary = `Deleted ${rowCount} manager account(s): ${rows.map(r => `${r.role}/${r.scope_key}`).join(', ')}`;
-      await logDelete(client, req.session.scopeKey, 'manager_account', summary, rowCount);
+      await logAudit(client, { actorType: 'master', actorKey: req.session.scopeKey, action: 'purge.manager_account', summary, affectedCount: rowCount });
       return { deletedCount: rowCount };
     });
 
@@ -256,7 +250,7 @@ masterPurgeRouter.post('/reports/delete', requireAuth, requireMaster, async (req
     const result = await withTransaction(async (client) => {
       const { rowCount } = await client.query('delete from reports where id = ANY($1::bigint[])', [ids]);
       if (!rowCount) throw new Error('No matching reports found.');
-      await logDelete(client, req.session.scopeKey, 'report', `Deleted ${rowCount} report(s)`, rowCount);
+      await logAudit(client, { actorType: 'master', actorKey: req.session.scopeKey, action: 'purge.report', summary: `Deleted ${rowCount} report(s)`, affectedCount: rowCount });
       return { deletedCount: rowCount };
     });
     res.json({ status: 'ok', deletedCount: result.deletedCount });
@@ -290,7 +284,7 @@ masterPurgeRouter.post('/content/delete', requireAuth, requireMaster, async (req
     const result = await withTransaction(async (client) => {
       const { rowCount } = await client.query('delete from content where id = ANY($1::bigint[])', [ids]);
       if (!rowCount) throw new Error('No matching content entries found.');
-      await logDelete(client, req.session.scopeKey, 'content', `Deleted ${rowCount} content entry(ies)`, rowCount);
+      await logAudit(client, { actorType: 'master', actorKey: req.session.scopeKey, action: 'purge.content', summary: `Deleted ${rowCount} content entry(ies)`, affectedCount: rowCount });
       return { deletedCount: rowCount };
     });
     res.json({ status: 'ok', deletedCount: result.deletedCount });
