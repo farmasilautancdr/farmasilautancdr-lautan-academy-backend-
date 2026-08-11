@@ -11,6 +11,7 @@ import { resourcesRouter } from './routes/resources.js';
 import { questionsRouter } from './routes/questions.js';
 import { masterPurgeRouter } from './routes/masterPurge.js';
 import { maintenanceRouter } from './routes/maintenance.js';
+import { auditLogRouter } from './routes/auditLog.js';
 import { checkMaintenance } from './middleware/auth.js';
 
 const app = express();
@@ -27,6 +28,7 @@ app.use('/staff-roster-manage', checkMaintenance, staffRouter);
 app.use('/resources', checkMaintenance, resourcesRouter);
 app.use('/questions', checkMaintenance, questionsRouter);
 app.use('/master/purge', masterPurgeRouter);
+app.use('/master/audit-log', auditLogRouter);
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
