@@ -181,6 +181,25 @@ create table if not exists system_settings (
   updated_at timestamptz not null default now()
 );
 
+-- Master Subsystem G: one row per staff/manager login (never Master's own
+-- tokens — those stay untracked/stateless by design). Note: this Supabase
+-- project's `auth` schema already has its own unrelated `sessions` table
+-- (Supabase Auth internals) — always qualify with table_schema='public' if
+-- ever inspecting via information_schema, or the two will double-match.
+create table if not exists sessions (
+  id bigserial primary key,
+  scope_type text not null,
+  scope_key text not null,
+  issued_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  revoked_at timestamptz,
+  revoked_by text,
+  ip text,
+  user_agent text
+);
+create index if not exists sessions_active_idx on sessions (revoked_at, expires_at);
+create index if not exists sessions_scope_idx on sessions (scope_type, scope_key);
+
 create index if not exists idx_results_outlet_name on results (outlet, name);
 create index if not exists idx_ai_results_outlet_name on ai_results (outlet, name);
 create index if not exists idx_ai_quizzes_passcode on ai_quizzes (passcode);
