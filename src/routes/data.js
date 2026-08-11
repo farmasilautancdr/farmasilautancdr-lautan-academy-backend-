@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { pool } from '../config/db.js';
 import { requireAuth } from '../middleware/auth.js';
-import { outletsForArea } from '../config/areas.js';
+async function outletsForArea(areaId) {
+  const { rows } = await pool.query('select code from store_outlets where area_id = $1 and active', [areaId]);
+  return rows.map(r => r.code);
+}
 
 export const dataRouter = Router();
 
@@ -60,7 +63,7 @@ dataRouter.get('/scoped-data', requireAuth, async (req, res) => {
   if (scopeType === 'area_manager') {
     // scopeKey is the area id now, not one outlet — the manager sees every
     // outlet in their assigned region.
-    const outlets = outletsForArea(scopeKey) || [];
+    const outlets = await outletsForArea(scopeKey);
     const [results, wrong, reports] = await Promise.all([
       pool.query('select * from results where outlet = ANY($1) order by created_at desc', [outlets]),
       pool.query('select * from wrong_answers where outlet = ANY($1) order by created_at desc', [outlets]),

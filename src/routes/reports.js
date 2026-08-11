@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { pool } from '../config/db.js';
 import { requireAuth, requireScope } from '../middleware/auth.js';
-import { outletsForArea } from '../config/areas.js';
+async function outletsForArea(areaId) {
+  const { rows } = await pool.query('select code from store_outlets where area_id = $1 and active', [areaId]);
+  return rows.map(r => r.code);
+}
 import { logAuditSafe } from '../services/auditLog.js';
 
 export const reportsRouter = Router();
@@ -22,7 +25,7 @@ reportsRouter.post('/', requireAuth, requireScope('area_manager'), async (req, r
   // region-scoping — validate the report's outlet is actually inside that
   // manager's region, not an exact string match (which could never be
   // true anymore and would 403 every real submission).
-  const regionOutlets = outletsForArea(req.session.scopeKey) || [];
+  const regionOutlets = await outletsForArea(req.session.scopeKey);
   if (!regionOutlets.includes(outlet)) {
     return res.status(403).json({ status: 'error', message: 'That outlet is not in your assigned region.' });
   }
