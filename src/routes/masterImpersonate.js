@@ -2,7 +2,6 @@ import { Router } from 'express';
 import jwt from 'jsonwebtoken';
 import { pool } from '../config/db.js';
 import { issueToken, requireAuth, requireMaster } from '../middleware/auth.js';
-import { outletsForArea, AREAS } from '../config/areas.js';
 import { logAudit, logAuditSafe } from '../services/auditLog.js';
 import { addRevokedSid } from '../services/sessionRevocationCache.js';
 
@@ -15,11 +14,19 @@ export const masterImpersonateRouter = Router();
 // meaningless). See
 // docs/superpowers/specs/2026-08-11-master-subsystem-h-design.md.
 const VALID_SCOPE_TYPES = ['staff_retail', 'staff_warehouse', 'outlet_manager', 'warehouse_manager', 'area_manager'];
-const RETAIL_OUTLETS = new Set(AREAS.flatMap((a) => a.outlets));
-// Local duplication, not a shared constant — matches this codebase's
-// existing per-file convention for this exact list.
-const WAREHOUSE_LOCATIONS = new Set(['Taskforce', 'Warehouse', 'Inventory', 'Logistic']);
 const IMPERSONATION_TTL_MINUTES = 30;
+
+async function isValidOutlet(division, code) {
+  const { rows } = await pool.query(
+    'select 1 from store_outlets where code = $1 and division = $2 and active',
+    [code, division]
+  );
+  return rows.length > 0;
+}
+async function areaExists(areaId) {
+  const { rows } = await pool.query('select 1 from areas where id = $1 and active', [areaId]);
+  return rows.length > 0;
+}
 
 masterImpersonateRouter.post('/start', requireAuth, requireMaster, async (req, res) => {
   const scopeType = (req.body.scopeType || '').toString();
@@ -40,11 +47,11 @@ masterImpersonateRouter.post('/start', requireAuth, requireMaster, async (req, r
     );
     if (!rows.length) return res.status(400).json({ authorized: false, error: 'Staff member not found.' });
   } else if (scopeType === 'outlet_manager') {
-    if (!RETAIL_OUTLETS.has(scopeKey)) return res.status(400).json({ authorized: false, error: 'Unknown outlet.' });
+    if (!(await isValidOutlet('retail', scopeKey))) return res.status(400).json({ authorized: false, error: 'Unknown outlet.' });
   } else if (scopeType === 'warehouse_manager') {
-    if (!WAREHOUSE_LOCATIONS.has(scopeKey)) return res.status(400).json({ authorized: false, error: 'Unknown location.' });
+    if (!(await isValidOutlet('warehouse', scopeKey))) return res.status(400).json({ authorized: false, error: 'Unknown location.' });
   } else if (scopeType === 'area_manager') {
-    if (!outletsForArea(scopeKey)) return res.status(400).json({ authorized: false, error: 'Unknown area.' });
+    if (!(await areaExists(scopeKey))) return res.status(400).json({ authorized: false, error: 'Unknown area.' });
   }
 
   const token = await issueToken(scopeType, scopeKey, {
