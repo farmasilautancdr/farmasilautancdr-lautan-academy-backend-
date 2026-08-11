@@ -3,6 +3,7 @@ import multer from 'multer';
 import { pool } from '../config/db.js';
 import { requireAuth, requireScope } from '../middleware/auth.js';
 import { env } from '../config/env.js';
+import { logAuditSafe } from '../services/auditLog.js';
 
 export const contentRouter = Router();
 
@@ -70,10 +71,22 @@ contentRouter.post('/', requireAuth, requireScope('supervisor'), async (req, res
     'insert into content (topic, category, title, body, link) values ($1,$2,$3,$4,$5) returning id',
     [topic, category, title, body, link]
   );
+  logAuditSafe({
+    actorType: req.session.scopeType,
+    actorKey: req.session.scopeKey,
+    action: 'content.add',
+    summary: `Added content "${title}" (${topic})`,
+  });
   res.json({ status: 'ok', id: rows[0].id });
 });
 
 contentRouter.delete('/:id', requireAuth, requireScope('supervisor'), async (req, res) => {
   await pool.query('delete from content where id = $1', [req.params.id]);
+  logAuditSafe({
+    actorType: req.session.scopeType,
+    actorKey: req.session.scopeKey,
+    action: 'content.delete',
+    summary: `Deleted content id ${req.params.id}`,
+  });
   res.json({ status: 'ok' });
 });
