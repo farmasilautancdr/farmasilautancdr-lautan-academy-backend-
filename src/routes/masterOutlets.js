@@ -5,12 +5,22 @@ import { logAudit } from '../services/auditLog.js';
 
 export const masterOutletsRouter = Router();
 
+// Plain `order by id` sorts text lexicographically — "R10" lands right
+// after "R1" and before "R2", not after "R9" like a human expects. Local
+// duplication of routes/outlets.js's same fix — file-local, not shared,
+// matches this codebase's existing per-file convention.
+const AREA_NATURAL_SORT = `
+  case when regexp_replace(id, '[^0-9]', '', 'g') = '' then 2147483647
+       else regexp_replace(id, '[^0-9]', '', 'g')::int end,
+  id
+`;
+
 // Same shape as the public GET /outlets + GET /areas, but includes
 // inactive rows — Master's panel needs to see and reactivate deactivated
 // entries, not just the active ones the public dropdowns show.
 masterOutletsRouter.get('/', requireAuth, requireMaster, async (req, res) => {
   const [areasResult, outletsResult] = await Promise.all([
-    pool.query('select id, label, active from areas order by id'),
+    pool.query(`select id, label, active from areas order by ${AREA_NATURAL_SORT}`),
     pool.query('select code, division, area_id, active from store_outlets order by division, code'),
   ]);
   res.json({

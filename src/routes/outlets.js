@@ -3,6 +3,16 @@ import { pool } from '../config/db.js';
 
 export const outletsRouter = Router();
 
+// Plain `order by a.id` sorts text lexicographically — "R10" lands right
+// after "R1" and before "R2", not after "R9" like a human expects. Extracts
+// the numeric part of the id and sorts on that (falling back to a huge
+// number, then the raw id, for an id with no digits at all) instead.
+const AREA_NATURAL_SORT = `
+  case when regexp_replace(a.id, '[^0-9]', '', 'g') = '' then 2147483647
+       else regexp_replace(a.id, '[^0-9]', '', 'g')::int end,
+  a.id
+`;
+
 // Public, no auth — same pattern as questionsRouter: every login/register
 // dropdown needs this before anyone is authenticated. Active rows only;
 // Master's own panel (routes/masterOutlets.js) is the one place inactive
@@ -36,7 +46,7 @@ areasRouter.get('/', async (req, res) => {
     left join store_outlets o on o.area_id = a.id and o.active
     where a.active
     group by a.id, a.label
-    order by a.id
+    order by ${AREA_NATURAL_SORT}
   `);
   res.json({ areas: rows.map(r => ({ id: r.id, label: r.label, outlets: r.outlets })) });
 });
