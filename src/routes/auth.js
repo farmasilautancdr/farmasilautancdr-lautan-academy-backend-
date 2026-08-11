@@ -4,6 +4,7 @@ import { pool } from '../config/db.js';
 import { issueToken, issueMasterToken, requireAuth, requireMaster, requireScope } from '../middleware/auth.js';
 import { isLockedOut, recordFailure, clearFailures } from '../middleware/rateLimit.js';
 import { outletsForArea } from '../config/areas.js';
+import { logAuditSafe } from '../services/auditLog.js';
 
 export const authRouter = Router();
 
@@ -178,6 +179,13 @@ authRouter.post('/manager-register', async (req, res) => {
     [role, scopeKey, passwordHash]
   );
 
+  logAuditSafe({
+    actorType: role,
+    actorKey: scopeKey,
+    action: 'manager.register',
+    summary: `Registered manager credential for ${role}/${scopeKey}`,
+  });
+
   const token = issueToken(role, scopeKey);
   res.json({ authorized: true, token });
 });
@@ -244,6 +252,12 @@ authRouter.post('/rotate-master-pin', requireAuth, requireScope('supervisor'), a
      on conflict (role) do update set pin_hash = excluded.pin_hash`,
     [role, pinHash]
   );
+  logAuditSafe({
+    actorType: req.session.scopeType,
+    actorKey: req.session.scopeKey,
+    action: 'manager.rotate_pin',
+    summary: `Rotated master PIN for role ${role}`,
+  });
   res.json({ status: 'ok' });
 });
 
@@ -279,6 +293,12 @@ authRouter.post('/master-reset-supervisor-pin', requireAuth, requireMaster, asyn
      on conflict (role) do update set pin_hash = excluded.pin_hash`,
     [pinHash]
   );
+  logAuditSafe({
+    actorType: 'master',
+    actorKey: req.session.scopeKey,
+    action: 'master.reset_supervisor_pin',
+    summary: 'Reset Supervisor PIN',
+  });
   res.json({ status: 'ok' });
 });
 
@@ -302,6 +322,13 @@ authRouter.post('/master-login', async (req, res) => {
     return res.json({ authorized: false, error: 'Incorrect username or password.' });
   }
   await clearFailures(failKey);
+
+  logAuditSafe({
+    actorType: 'master',
+    actorKey: username,
+    action: 'master.login',
+    summary: `Master login: ${username}`,
+  });
 
   const token = issueMasterToken(username);
   res.json({ authorized: true, token });
