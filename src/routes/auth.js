@@ -49,7 +49,7 @@ authRouter.post('/staff-login', async (req, res) => {
   await clearFailures(failKey);
   const scopeType = division === 'warehouse' ? 'staff_warehouse' : 'staff_retail';
   const scopeKey = `${outlet}|${name}`;
-  const token = issueToken(scopeType, scopeKey);
+  const token = await issueToken(scopeType, scopeKey);
   res.json({ authorized: true, token });
 });
 
@@ -117,7 +117,7 @@ authRouter.post('/manager-login', async (req, res) => {
   }
   await clearFailures(failKey);
 
-  const token = issueToken(role, scopeKey);
+  const token = await issueToken(role, scopeKey);
   res.json({ authorized: true, token });
 });
 
@@ -186,7 +186,7 @@ authRouter.post('/manager-register', async (req, res) => {
     summary: `Registered manager credential for ${role}/${scopeKey}`,
   });
 
-  const token = issueToken(role, scopeKey);
+  const token = await issueToken(role, scopeKey);
   res.json({ authorized: true, token });
 });
 

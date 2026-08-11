@@ -1,9 +1,25 @@
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env.js';
 import { pool } from '../config/db.js';
+import { isRevoked } from '../services/sessionRevocationCache.js';
 
-export function issueToken(scopeType, scopeKey) {
-  return jwt.sign({ scopeType, scopeKey }, env.jwtSecret, { expiresIn: '12h' });
+// 12h matches this project's existing staff/manager JWT lifetime — kept as
+// one constant so the DB row's expires_at and the JWT's own expiresIn can
+// never drift apart.
+const SESSION_TTL_HOURS = 12;
+
+export async function issueToken(scopeType, scopeKey) {
+  const { rows } = await pool.query(
+    `insert into sessions (scope_type, scope_key, expires_at)
+     values ($1, $2, now() + interval '${SESSION_TTL_HOURS} hours')
+     returning id`,
+    [scopeType, scopeKey]
+  );
+  // bigserial comes back as a JS string from node-pg — keep it a string all
+  // the way through (JWT claim, revocation cache, revoke-route params). See
+  // this file's Global Constraints note on the standard_questions.id bug.
+  const sid = rows[0].id;
+  return jwt.sign({ scopeType, scopeKey, sid }, env.jwtSecret, { expiresIn: `${SESSION_TTL_HOURS}h` });
 }
 
 // Separate signer from issueToken: shorter expiry since this is an
@@ -19,6 +35,12 @@ export function requireAuth(req, res, next) {
   if (!token) return res.status(401).json({ authorized: false, error: 'No session token.' });
   try {
     req.session = jwt.verify(token, env.jwtSecret);
+    // Master tokens carry no sid and are never tracked/revocable (see
+    // Global Constraints) — same 401 shape as natural expiry, so a
+    // force-logged-out client needs no new frontend error handling.
+    if (req.session.scopeType !== 'master' && isRevoked(req.session.sid)) {
+      return res.status(401).json({ authorized: false, error: 'Your session has expired — please log in again.' });
+    }
     next();
   } catch (e) {
     res.status(401).json({ authorized: false, error: 'Your session has expired — please log in again.' });
