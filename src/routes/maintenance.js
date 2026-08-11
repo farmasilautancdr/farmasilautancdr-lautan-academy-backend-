@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../config/db.js';
 import { requireAuth, requireMaster } from '../middleware/auth.js';
+import { logAuditSafe } from '../services/auditLog.js';
 
 export const maintenanceRouter = Router();
 
@@ -25,5 +26,11 @@ maintenanceRouter.post('/master/maintenance', requireAuth, requireMaster, async 
      on conflict (key) do update set value = $1, updated_by = $2, updated_at = now()`,
     [JSON.stringify({ enabled, message }), req.session.scopeKey]
   );
+  logAuditSafe({
+    actorType: 'master',
+    actorKey: req.session.scopeKey,
+    action: 'maintenance.toggle',
+    summary: `Maintenance ${enabled ? 'enabled' : 'disabled'}${message ? `: "${message}"` : ''}`,
+  });
   res.json({ status: 'ok' });
 });
