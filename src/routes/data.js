@@ -12,6 +12,35 @@ function isSameCalendarDay(a, b) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
+// CPD hours this calendar year, summed across all three sources:
+// - results rows whose topic matches a video_trainings topic: that
+//   video's real hours.
+// - results rows whose topic does NOT match a video_trainings topic
+//   (i.e. Module Quiz): flat 1hr each (coalesce(vt.hours, 1)).
+// - ai_results rows (always AI Practice, no topic check needed): flat
+//   0.25hr each.
+// See docs/superpowers/specs/2026-08-13-cpd-hours-revision-design.md.
+async function cpdHoursThisYear(outlet, name) {
+  const [videoAndModule, aiPractice] = await Promise.all([
+    pool.query(
+      `select coalesce(sum(coalesce(vt.hours, 1)), 0) as hours
+       from results r
+       left join video_trainings vt on vt.topic = r.topic
+       where r.outlet = $1 and r.name = $2
+         and extract(year from r.created_at) = extract(year from now())`,
+      [outlet, name]
+    ),
+    pool.query(
+      `select count(*) * 0.25 as hours
+       from ai_results
+       where outlet = $1 and name = $2
+         and extract(year from created_at) = extract(year from now())`,
+      [outlet, name]
+    ),
+  ]);
+  return Number(videoAndModule.rows[0].hours) + Number(aiPractice.rows[0].hours);
+}
+
 // Mirrors GAS's buildScopedData, minus reports/content/referenceDocs
 // (still served from GAS — see CLAUDE.md / migration notes for why).
 dataRouter.get('/scoped-data', requireAuth, async (req, res) => {
@@ -20,23 +49,25 @@ dataRouter.get('/scoped-data', requireAuth, async (req, res) => {
 
   if (scopeType === 'staff_retail') {
     const [outlet, name] = scopeKey.split('|');
-    const [results, wrong, aiResults, aiWrong, reports] = await Promise.all([
+    const [results, wrong, aiResults, aiWrong, reports, hours] = await Promise.all([
       pool.query('select * from results where outlet=$1 and name=$2 order by created_at desc', [outlet, name]),
       pool.query('select * from wrong_answers where outlet=$1 and staff_name=$2 order by created_at desc', [outlet, name]),
       pool.query('select * from ai_results where outlet=$1 and name=$2 order by created_at desc', [outlet, name]),
       pool.query('select * from ai_wrong_answers where outlet=$1 and staff_name=$2 order by created_at desc', [outlet, name]),
       pool.query('select * from reports where outlet=$1 and staff_name=$2 order by created_at desc', [outlet, name]),
+      cpdHoursThisYear(outlet, name),
     ]);
-    return res.json(toResponse(results.rows, wrong.rows, aiResults.rows, aiWrong.rows, reports.rows));
+    return res.json({ ...toResponse(results.rows, wrong.rows, aiResults.rows, aiWrong.rows, reports.rows), cpdHoursThisYear: hours });
   }
 
   if (scopeType === 'staff_warehouse') {
     const [outlet, name] = scopeKey.split('|');
-    const [aiResults, aiWrong] = await Promise.all([
+    const [aiResults, aiWrong, hours] = await Promise.all([
       pool.query('select * from ai_results where outlet=$1 and name=$2 order by created_at desc', [outlet, name]),
       pool.query('select * from ai_wrong_answers where outlet=$1 and staff_name=$2 order by created_at desc', [outlet, name]),
+      cpdHoursThisYear(outlet, name),
     ]);
-    return res.json(toResponse([], [], aiResults.rows, aiWrong.rows));
+    return res.json({ ...toResponse([], [], aiResults.rows, aiWrong.rows), cpdHoursThisYear: hours });
   }
 
   if (scopeType === 'outlet_manager') {
