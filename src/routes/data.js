@@ -240,3 +240,61 @@ dataRouter.post('/ai-results', requireAuth, async (req, res) => {
   }
   res.json({ status: 'ok', score, total, percentage });
 });
+
+// Staff-triggered: save a completed video-training quiz attempt. Mirrors
+// POST /results exactly (server-authoritative grading against the real
+// question bank, same-day no-op, same wrong_answers write) except it reads
+// from video_questions instead of standard_questions, and writes into the
+// same `results` table Module Quiz uses — topic alone distinguishes a
+// video-training attempt in Quiz History/the dashboard average, no new
+// table or column needed.
+dataRouter.post('/video-results', requireAuth, async (req, res) => {
+  const name = (req.body.name || '').toString().trim().toUpperCase();
+  const outlet = (req.body.outlet || '').toString().trim().toUpperCase();
+  const topic = (req.body.topic || 'N/A').toString().trim();
+  const answers = Array.isArray(req.body.answers) ? req.body.answers : [];
+
+  if (req.session.scopeType !== 'staff_retail' || req.session.scopeKey !== `${outlet}|${name}`) {
+    return res.status(403).json({ status: 'unauthorized' });
+  }
+
+  const { rows } = await pool.query(
+    'select created_at from results where name=$1 and outlet=$2 and topic=$3 order by created_at desc limit 1',
+    [name, outlet, topic]
+  );
+  const alreadyToday = rows[0] && isSameCalendarDay(new Date(rows[0].created_at), new Date());
+  if (alreadyToday) return res.json({ status: 'ok' });
+
+  const { rows: questions } = await pool.query("select * from video_questions where topic = $1 and status = 'active' order by id", [topic]);
+  if (!questions.length) return res.status(404).json({ status: 'error', error: 'No questions found for this video.' });
+
+  const chosenById = new Map();
+  for (const a of answers) chosenById.set(parseInt(a.id), parseInt(a.chosen));
+
+  let score = 0;
+  const wrongRows = [];
+  for (const q of questions) {
+    const chosen = chosenById.get(parseInt(q.id));
+    if (chosen === q.correct) {
+      score++;
+    } else {
+      const opts = [q.opt1_en, q.opt2_en, q.opt3_en, q.opt4_en];
+      wrongRows.push({ question: q.question_en, chosen: opts[chosen] ?? '(no answer)', correct: opts[q.correct] ?? '' });
+    }
+  }
+  const total = questions.length;
+  const percentage = Math.round((score / total) * 100);
+  const attemptId = `VID${Date.now()}`;
+
+  await pool.query(
+    'insert into results (attempt_id, outlet, name, topic, score, percentage) values ($1,$2,$3,$4,$5,$6)',
+    [attemptId, outlet, name, topic, `${score}/${total}`, `${percentage}%`]
+  );
+  for (const w of wrongRows) {
+    await pool.query(
+      'insert into wrong_answers (attempt_id, outlet, staff_name, topic, question, chosen, correct) values ($1,$2,$3,$4,$5,$6,$7)',
+      [attemptId, outlet, name, topic, w.question, w.chosen, w.correct]
+    );
+  }
+  res.json({ status: 'ok', score, total, percentage });
+});
