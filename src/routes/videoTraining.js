@@ -26,6 +26,53 @@ videoTrainingsRouter.get('/', requireAuth, async (req, res) => {
   });
 });
 
+// Accepts youtube.com/watch?v=<id> or youtu.be/<id> (optionally with extra
+// query params/timestamps after the id) — rejects anything else so a
+// Supervisor can't get an arbitrary iframe embedded via this field.
+function extractYouTubeId(url) {
+  const watchMatch = url.match(/(?:youtube\.com\/watch\?v=|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
+  if (watchMatch) return watchMatch[1];
+  const shortMatch = url.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
+  if (shortMatch) return shortMatch[1];
+  return null;
+}
+
+// Matches content.js's Supervisor-only add/delete gating and audit-log
+// convention exactly.
+videoTrainingsRouter.post('/', requireAuth, requireScope('supervisor'), async (req, res) => {
+  const title = (req.body.title || '').toString().trim();
+  const topic = (req.body.topic || '').toString().trim();
+  const youtubeUrl = (req.body.youtubeUrl || '').toString().trim();
+  if (!title || !topic || !youtubeUrl) {
+    return res.status(400).json({ status: 'error', error: 'Title, topic, and YouTube link are required.' });
+  }
+  if (!extractYouTubeId(youtubeUrl)) {
+    return res.status(400).json({ status: 'error', error: 'Not a recognized YouTube link (expected a youtube.com/watch?v=... or youtu.be/... URL).' });
+  }
+  const { rows } = await pool.query(
+    'insert into video_trainings (title, topic, youtube_url) values ($1,$2,$3) returning id',
+    [title, topic, youtubeUrl]
+  );
+  logAuditSafe({
+    actorType: req.session.scopeType,
+    actorKey: req.session.scopeKey,
+    action: 'video_training.add',
+    summary: `Added video training "${title}" (${topic})`,
+  });
+  res.json({ status: 'ok', id: rows[0].id });
+});
+
+videoTrainingsRouter.delete('/:id', requireAuth, requireScope('supervisor'), async (req, res) => {
+  await pool.query('delete from video_trainings where id = $1', [req.params.id]);
+  logAuditSafe({
+    actorType: req.session.scopeType,
+    actorKey: req.session.scopeKey,
+    action: 'video_training.delete',
+    summary: `Deleted video training id ${req.params.id}`,
+  });
+  res.json({ status: 'ok' });
+});
+
 // Scoped to one topic (the watch page already knows which topic it needs
 // once the video ends) — mirrors GET /questions but doesn't ship the whole
 // bank for every request.
