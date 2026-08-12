@@ -261,3 +261,12 @@ create table if not exists video_questions (
   created_at timestamptz not null default now()
 );
 create index if not exists idx_video_questions_topic on video_questions (topic);
+
+-- CPD Hours Tracking (120hr/year target). Supervisor sets this manually
+-- per video when adding it (not derived from the real YouTube duration —
+-- see docs/superpowers/specs/2026-08-12-cpd-hours-design.md). Hours-this-
+-- year is always computed on read (join results -> video_trainings by
+-- topic, filtered to the current calendar year) — no separate ledger
+-- table. Module Quiz and AI Practice also count toward the target at a
+-- flat rate — see docs/superpowers/specs/2026-08-13-cpd-hours-revision-design.md.
+alter table video_trainings add column if not exists hours numeric not null default 1;
