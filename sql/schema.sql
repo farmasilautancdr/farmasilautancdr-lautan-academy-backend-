@@ -233,3 +233,31 @@ create table if not exists store_outlets (
   created_at timestamptz not null default now()
 );
 create index if not exists store_outlets_area_idx on store_outlets (area_id);
+
+-- Video Training. Separate from standard_questions/Module Quiz by design —
+-- same choice as store_outlets vs the unrelated pre-existing `outlets`
+-- table: two topic-grouped question banks that must never accidentally
+-- mix. video_trainings.topic is matched by plain text against
+-- video_questions.topic, same loose-coupling convention standard_questions
+-- already uses with Module Quiz — no foreign key. See
+-- docs/superpowers/specs/2026-08-12-video-training-design.md.
+create table if not exists video_trainings (
+  id bigserial primary key,
+  title text not null,
+  topic text not null,
+  youtube_url text not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists video_questions (
+  id bigserial primary key,
+  topic text not null,
+  question_en text not null,
+  question_ms text not null,
+  opt1_en text, opt2_en text, opt3_en text, opt4_en text,
+  opt1_ms text, opt2_ms text, opt3_ms text, opt4_ms text,
+  correct int not null,
+  status text not null default 'active',
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_video_questions_topic on video_questions (topic);
