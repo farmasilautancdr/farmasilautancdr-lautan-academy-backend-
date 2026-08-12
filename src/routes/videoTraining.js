@@ -13,7 +13,7 @@ export const videoQuestionsRouter = Router();
 // authoritative (a join/exists check), not a client-side filter.
 videoTrainingsRouter.get('/', requireAuth, async (req, res) => {
   const { rows } = await pool.query(`
-    select vt.id, vt.title, vt.topic, vt.youtube_url
+    select vt.id, vt.title, vt.topic, vt.youtube_url, vt.hours
     from video_trainings vt
     where exists (
       select 1 from video_questions vq
@@ -22,7 +22,7 @@ videoTrainingsRouter.get('/', requireAuth, async (req, res) => {
     order by vt.title
   `);
   res.json({
-    videoTrainings: rows.map(v => ({ id: v.id, title: v.title, topic: v.topic, youtubeUrl: v.youtube_url })),
+    videoTrainings: rows.map(v => ({ id: v.id, title: v.title, topic: v.topic, youtubeUrl: v.youtube_url, hours: Number(v.hours) })),
   });
 });
 
@@ -62,15 +62,19 @@ videoTrainingsRouter.post('/', requireAuth, requireScope('supervisor'), async (r
   const title = (req.body.title || '').toString().trim();
   const topic = (req.body.topic || '').toString().trim();
   const youtubeUrl = (req.body.youtubeUrl || '').toString().trim();
+  const hours = parseFloat(req.body.hours);
   if (!title || !topic || !youtubeUrl) {
     return res.status(400).json({ status: 'error', error: 'Title, topic, and YouTube link are required.' });
   }
   if (!extractYouTubeId(youtubeUrl)) {
     return res.status(400).json({ status: 'error', error: 'Not a recognized YouTube link (expected a youtube.com/watch?v=... or youtu.be/... URL).' });
   }
+  if (!Number.isFinite(hours) || hours <= 0) {
+    return res.status(400).json({ status: 'error', error: 'Hours must be a positive number.' });
+  }
   const { rows } = await pool.query(
-    'insert into video_trainings (title, topic, youtube_url) values ($1,$2,$3) returning id',
-    [title, topic, youtubeUrl]
+    'insert into video_trainings (title, topic, youtube_url, hours) values ($1,$2,$3,$4) returning id',
+    [title, topic, youtubeUrl, hours]
   );
   logAuditSafe({
     actorType: req.session.scopeType,
