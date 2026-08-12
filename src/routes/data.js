@@ -95,12 +95,19 @@ dataRouter.get('/scoped-data', requireAuth, async (req, res) => {
     // scopeKey is the area id now, not one outlet — the manager sees every
     // outlet in their assigned region.
     const outlets = await outletsForArea(scopeKey);
-    const [results, wrong, reports] = await Promise.all([
+    const [results, wrong, aiResults, reports] = await Promise.all([
       pool.query('select * from results where outlet = ANY($1) order by created_at desc', [outlets]),
       pool.query('select * from wrong_answers where outlet = ANY($1) order by created_at desc', [outlets]),
+      // Was hardcoded [] — Area Manager never got AI Practice data at all,
+      // an existing gap this CPD hours feature needs fixed to count AI
+      // Practice hours for this role too. No ai_wrong_answers query added
+      // — nothing on this page reads AI Practice wrong-answer detail, out
+      // of scope beyond unblocking the CPD summary (see the 2026-08-13
+      // revision spec).
+      pool.query('select * from ai_results where outlet = ANY($1) order by created_at desc', [outlets]),
       pool.query('select * from reports where outlet = ANY($1) order by created_at desc', [outlets]),
     ]);
-    return res.json(toResponse(results.rows, wrong.rows, [], [], reports.rows));
+    return res.json(toResponse(results.rows, wrong.rows, aiResults.rows, [], reports.rows));
   }
 
   if (scopeType === 'supervisor') {
