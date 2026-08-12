@@ -26,14 +26,33 @@ videoTrainingsRouter.get('/', requireAuth, async (req, res) => {
   });
 });
 
-// Accepts youtube.com/watch?v=<id> or youtu.be/<id> (optionally with extra
-// query params/timestamps after the id) — rejects anything else so a
-// Supervisor can't get an arbitrary iframe embedded via this field.
+// Accepts youtube.com/watch?v=<id>, youtube.com/embed/<id>, or
+// youtu.be/<id> — rejects anything else so a Supervisor can't get an
+// arbitrary iframe embedded via this field. Parses as a real URL and
+// checks the hostname exactly (not a substring/regex match against the
+// raw string), so e.g. "https://evil.example/?u=youtube.com/watch?v=..."
+// can't sneak past by containing the right substring anywhere.
 function extractYouTubeId(url) {
-  const watchMatch = url.match(/(?:youtube\.com\/watch\?v=|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
-  if (watchMatch) return watchMatch[1];
-  const shortMatch = url.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
-  if (shortMatch) return shortMatch[1];
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const host = parsed.hostname.replace(/^www\./, '');
+  const idPattern = /^[a-zA-Z0-9_-]{11}$/;
+  if (host === 'youtube.com') {
+    if (parsed.pathname === '/watch') {
+      const id = parsed.searchParams.get('v');
+      return id && idPattern.test(id) ? id : null;
+    }
+    const embedMatch = parsed.pathname.match(/^\/embed\/([a-zA-Z0-9_-]{11})$/);
+    return embedMatch ? embedMatch[1] : null;
+  }
+  if (host === 'youtu.be') {
+    const shortMatch = parsed.pathname.match(/^\/([a-zA-Z0-9_-]{11})$/);
+    return shortMatch ? shortMatch[1] : null;
+  }
   return null;
 }
 
