@@ -13,6 +13,7 @@ import { videoTrainingsRouter, videoQuestionsRouter } from './routes/videoTraini
 import { outletsRouter, areasRouter } from './routes/outlets.js';
 import { masterOutletsRouter } from './routes/masterOutlets.js';
 import { masterPurgeRouter } from './routes/masterPurge.js';
+import { masterAnnualResetRouter } from './routes/masterAnnualReset.js';
 import { maintenanceRouter } from './routes/maintenance.js';
 import { auditLogRouter } from './routes/auditLog.js';
 import { masterBackupRouter } from './routes/masterBackup.js';
@@ -39,6 +40,7 @@ app.use('/video-questions', checkMaintenance, videoQuestionsRouter);
 app.use('/outlets', outletsRouter);
 app.use('/areas', areasRouter);
 app.use('/master/purge', masterPurgeRouter);
+app.use('/master/annual-reset', masterAnnualResetRouter);
 app.use('/master/audit-log', auditLogRouter);
 app.use('/master/sessions', masterSessionsRouter);
 app.use('/master/impersonate', masterImpersonateRouter);
