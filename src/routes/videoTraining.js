@@ -13,16 +13,56 @@ export const videoQuestionsRouter = Router();
 // authoritative (a join/exists check), not a client-side filter.
 videoTrainingsRouter.get('/', requireAuth, async (req, res) => {
   const { rows } = await pool.query(`
-    select vt.id, vt.title, vt.topic, vt.youtube_url, vt.hours
+    select vt.id, vt.title, vt.topic, vt.youtube_url, vt.hours, vt.kind, vt.body
     from video_trainings vt
-    where exists (
-      select 1 from video_questions vq
-      where vq.topic = vt.topic and vq.status = 'active'
-    )
+    where vt.pharmacist_only = false
+      and exists (
+        select 1 from video_questions vq
+        where vq.topic = vt.topic and vq.status = 'active'
+      )
     order by vt.title
   `);
   res.json({
-    videoTrainings: rows.map(v => ({ id: v.id, title: v.title, topic: v.topic, youtubeUrl: v.youtube_url, hours: Number(v.hours) })),
+    videoTrainings: rows.map(v => ({
+      id: v.id, title: v.title, topic: v.topic, youtubeUrl: v.youtube_url,
+      hours: Number(v.hours), kind: v.kind, body: v.body,
+    })),
+  });
+});
+
+// Live DB check every request — the client's isPharmacist flag (set at
+// login) only controls nav visibility, never authorization. See
+// docs/superpowers/specs/2026-08-13-pharmacist-tag-design.md.
+videoTrainingsRouter.get('/pharmacist', requireAuth, async (req, res) => {
+  const scopeType = req.session.scopeType;
+  if (scopeType !== 'staff_retail' && scopeType !== 'staff_warehouse') {
+    return res.status(403).json({ status: 'error', error: 'Not authorized.' });
+  }
+  const [outlet, name] = (req.session.scopeKey || '').split('|');
+  const division = scopeType === 'staff_warehouse' ? 'warehouse' : 'retail';
+  const { rows: staffRows } = await pool.query(
+    'select is_pharmacist from staff_roster where division = $1 and outlet = $2 and name = $3',
+    [division, outlet, name]
+  );
+  if (!staffRows[0]?.is_pharmacist) {
+    return res.status(403).json({ status: 'error', error: 'Not authorized.' });
+  }
+
+  const { rows } = await pool.query(`
+    select vt.id, vt.title, vt.topic, vt.youtube_url, vt.hours, vt.kind, vt.body
+    from video_trainings vt
+    where vt.pharmacist_only = true
+      and exists (
+        select 1 from video_questions vq
+        where vq.topic = vt.topic and vq.status = 'active'
+      )
+    order by vt.title
+  `);
+  res.json({
+    videoTrainings: rows.map(v => ({
+      id: v.id, title: v.title, topic: v.topic, youtubeUrl: v.youtube_url,
+      hours: Number(v.hours), kind: v.kind, body: v.body,
+    })),
   });
 });
 
@@ -61,26 +101,41 @@ function extractYouTubeId(url) {
 videoTrainingsRouter.post('/', requireAuth, requireScope('supervisor'), async (req, res) => {
   const title = (req.body.title || '').toString().trim();
   const topic = (req.body.topic || '').toString().trim();
+  const kind = (req.body.kind || 'video').toString().trim();
   const youtubeUrl = (req.body.youtubeUrl || '').toString().trim();
+  const body = (req.body.body || '').toString().trim();
+  const pharmacistOnly = !!req.body.pharmacistOnly;
   const hours = parseFloat(req.body.hours);
-  if (!title || !topic || !youtubeUrl) {
-    return res.status(400).json({ status: 'error', error: 'Title, topic, and YouTube link are required.' });
+
+  if (!['video', 'reading'].includes(kind)) {
+    return res.status(400).json({ status: 'error', error: 'Kind must be video or reading.' });
   }
-  if (!extractYouTubeId(youtubeUrl)) {
-    return res.status(400).json({ status: 'error', error: 'Not a recognized YouTube link (expected a youtube.com/watch?v=... or youtu.be/... URL).' });
+  if (!title || !topic) {
+    return res.status(400).json({ status: 'error', error: 'Title and topic are required.' });
+  }
+  if (kind === 'video') {
+    if (!youtubeUrl) {
+      return res.status(400).json({ status: 'error', error: 'YouTube link is required.' });
+    }
+    if (!extractYouTubeId(youtubeUrl)) {
+      return res.status(400).json({ status: 'error', error: 'Not a recognized YouTube link (expected a youtube.com/watch?v=... or youtu.be/... URL).' });
+    }
+  } else if (!body) {
+    return res.status(400).json({ status: 'error', error: 'Reading material body is required.' });
   }
   if (!Number.isFinite(hours) || hours <= 0) {
     return res.status(400).json({ status: 'error', error: 'Hours must be a positive number.' });
   }
+
   const { rows } = await pool.query(
-    'insert into video_trainings (title, topic, youtube_url, hours) values ($1,$2,$3,$4) returning id',
-    [title, topic, youtubeUrl, hours]
+    'insert into video_trainings (title, topic, youtube_url, hours, kind, pharmacist_only, body) values ($1,$2,$3,$4,$5,$6,$7) returning id',
+    [title, topic, kind === 'video' ? youtubeUrl : null, hours, kind, pharmacistOnly, kind === 'reading' ? body : null]
   );
   logAuditSafe({
     actorType: req.session.scopeType,
     actorKey: req.session.scopeKey,
     action: 'video_training.add',
-    summary: `Added video training "${title}" (${topic})`,
+    summary: `Added ${kind} training "${title}" (${topic})${pharmacistOnly ? ', pharmacist-only' : ''}`,
   });
   res.json({ status: 'ok', id: rows[0].id });
 });
