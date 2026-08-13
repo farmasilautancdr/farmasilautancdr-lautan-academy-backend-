@@ -39,7 +39,7 @@ authRouter.post('/staff-login', async (req, res) => {
   }
 
   const { rows } = await pool.query(
-    'select pin_hash from staff_roster where division = $1 and outlet = $2 and name = $3',
+    'select pin_hash, is_pharmacist from staff_roster where division = $1 and outlet = $2 and name = $3',
     [division, outlet, name]
   );
   const match = rows[0];
@@ -53,7 +53,7 @@ authRouter.post('/staff-login', async (req, res) => {
   const scopeType = division === 'warehouse' ? 'staff_warehouse' : 'staff_retail';
   const scopeKey = `${outlet}|${name}`;
   const token = await issueToken(scopeType, scopeKey);
-  res.json({ authorized: true, token });
+  res.json({ authorized: true, token, isPharmacist: match.is_pharmacist });
 });
 
 // Manager: role + PIN/password (+ outlet, unless supervisor) -> JWT.
