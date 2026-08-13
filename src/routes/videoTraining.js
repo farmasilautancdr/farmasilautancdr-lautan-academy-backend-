@@ -35,17 +35,22 @@ videoTrainingsRouter.get('/', requireAuth, async (req, res) => {
 // docs/superpowers/specs/2026-08-13-pharmacist-tag-design.md.
 videoTrainingsRouter.get('/pharmacist', requireAuth, async (req, res) => {
   const scopeType = req.session.scopeType;
-  if (scopeType !== 'staff_retail' && scopeType !== 'staff_warehouse') {
-    return res.status(403).json({ status: 'error', error: 'Not authorized.' });
-  }
-  const [outlet, name] = (req.session.scopeKey || '').split('|');
-  const division = scopeType === 'staff_warehouse' ? 'warehouse' : 'retail';
-  const { rows: staffRows } = await pool.query(
-    'select is_pharmacist from staff_roster where division = $1 and outlet = $2 and name = $3',
-    [division, outlet, name]
-  );
-  if (!staffRows[0]?.is_pharmacist) {
-    return res.status(403).json({ status: 'error', error: 'Not authorized.' });
+  // Supervisor manages this content (add-course form), so it needs to see
+  // it here too — skips the per-staff tag check below, which only applies
+  // to staff consuming the gated list.
+  if (scopeType !== 'supervisor') {
+    if (scopeType !== 'staff_retail' && scopeType !== 'staff_warehouse') {
+      return res.status(403).json({ status: 'error', error: 'Not authorized.' });
+    }
+    const [outlet, name] = (req.session.scopeKey || '').split('|');
+    const division = scopeType === 'staff_warehouse' ? 'warehouse' : 'retail';
+    const { rows: staffRows } = await pool.query(
+      'select is_pharmacist from staff_roster where division = $1 and outlet = $2 and name = $3',
+      [division, outlet, name]
+    );
+    if (!staffRows[0]?.is_pharmacist) {
+      return res.status(403).json({ status: 'error', error: 'Not authorized.' });
+    }
   }
 
   const { rows } = await pool.query(`
