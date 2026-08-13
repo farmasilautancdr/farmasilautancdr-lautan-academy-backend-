@@ -112,3 +112,38 @@ staffRouter.delete('/', requireAuth, requireScope('outlet_manager', 'warehouse_m
   });
   res.json({ status: 'ok' });
 });
+
+// Company-wide (not outlet-scoped) — Supervisor tags staff Pharmacist from
+// here. No other role can see or set this. See
+// docs/superpowers/specs/2026-08-13-pharmacist-tag-design.md.
+staffRouter.get('/all', requireAuth, requireScope('supervisor'), async (req, res) => {
+  const { rows } = await pool.query(
+    'select id, division, outlet, name, id_note, is_pharmacist from staff_roster order by outlet, name'
+  );
+  res.json({
+    staff: rows.map(r => ({
+      id: r.id,
+      division: r.division,
+      outlet: r.outlet,
+      name: r.name,
+      idNote: r.id_note,
+      isPharmacist: r.is_pharmacist,
+    })),
+  });
+});
+
+staffRouter.patch('/:id/pharmacist', requireAuth, requireScope('supervisor'), async (req, res) => {
+  const id = parseInt(req.params.id);
+  const isPharmacist = !!req.body.isPharmacist;
+  const { rows } = await pool.query('select outlet, name from staff_roster where id = $1', [id]);
+  if (!rows[0]) return res.status(404).json({ status: 'error', error: 'Staff member not found.' });
+
+  await pool.query('update staff_roster set is_pharmacist = $1 where id = $2', [isPharmacist, id]);
+  logAuditSafe({
+    actorType: req.session.scopeType,
+    actorKey: req.session.scopeKey,
+    action: 'staff.pharmacist_tag',
+    summary: `${isPharmacist ? 'Tagged' : 'Untagged'} ${rows[0].outlet}/${rows[0].name} as Pharmacist`,
+  });
+  res.json({ status: 'ok' });
+});
