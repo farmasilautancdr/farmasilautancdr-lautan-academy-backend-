@@ -270,3 +270,14 @@ create index if not exists idx_video_questions_topic on video_questions (topic);
 -- table. Module Quiz and AI Practice also count toward the target at a
 -- flat rate — see docs/superpowers/specs/2026-08-13-cpd-hours-revision-design.md.
 alter table video_trainings add column if not exists hours numeric not null default 1;
+
+-- Pharmacist Tag + Gated Pharmacist Courses (CPD sub-project B). Supervisor
+-- tags staff Pharmacist (UI label only — column name unchanged); Pharmacist
+-- Courses reuses this same table with pharmacist_only=true, kind
+-- distinguishing a YouTube video from a reading-material page (body). See
+-- docs/superpowers/specs/2026-08-13-pharmacist-tag-design.md.
+alter table staff_roster add column if not exists is_pharmacist boolean not null default false;
+alter table video_trainings alter column youtube_url drop not null;
+alter table video_trainings add column if not exists kind text not null default 'video';
+alter table video_trainings add column if not exists pharmacist_only boolean not null default false;
+alter table video_trainings add column if not exists body text;
