@@ -313,3 +313,34 @@ videoQuestionsRouter.patch('/:id', requireAuth, requireScope('supervisor'), asyn
   });
   res.json({ status: 'ok' });
 });
+
+// Blocks deleting a topic's last remaining question — GET /video-trainings
+// and GET /video-trainings/pharmacist both only list a course if its topic
+// has >=1 active video_questions row (see those handlers above), so
+// deleting the last one would silently vanish the course from staff view.
+videoQuestionsRouter.delete('/:id', requireAuth, requireScope('supervisor'), async (req, res) => {
+  const id = parseInt(req.params.id);
+  const { rows } = await pool.query('select topic from video_questions where id = $1', [id]);
+  if (!rows[0]) return res.status(404).json({ status: 'error', error: 'Question not found.' });
+  const topic = rows[0].topic;
+
+  const { rows: siblingRows } = await pool.query(
+    'select count(*)::int as count from video_questions where topic = $1 and id != $2',
+    [topic, id]
+  );
+  if (siblingRows[0].count === 0) {
+    return res.status(400).json({
+      status: 'error',
+      error: `Can't delete: this is the only question left for "${topic}" — the course would disappear from staff view.`,
+    });
+  }
+
+  await pool.query('delete from video_questions where id = $1', [id]);
+  logAuditSafe({
+    actorType: req.session.scopeType,
+    actorKey: req.session.scopeKey,
+    action: 'video_question.delete',
+    summary: `Deleted question ${id} (topic "${topic}")`,
+  });
+  res.json({ status: 'ok' });
+});
