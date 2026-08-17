@@ -14,20 +14,34 @@ function isSameCalendarDay(a, b) {
 
 // CPD hours this calendar year, summed across all three sources:
 // - results rows whose topic matches a video_trainings topic: that
-//   video's real hours.
+//   video's real hours, every attempt counts (retakes stack).
 // - results rows whose topic does NOT match a video_trainings topic
-//   (i.e. Module Quiz): flat 1hr each (coalesce(vt.hours, 1)).
+//   (i.e. Module Quiz): flat 1hr, but capped to the first attempt per
+//   topic per year — count(distinct topic) rather than count(*), since
+//   the rate is flat this is equivalent to "only the first attempt
+//   counts" without needing to pick out which row is literally first.
+//   Retaking the same topic on a different day still no-ops CPD hours,
+//   it just isn't blocked from re-attempting (see POST /results'
+//   same-day dedup for the separate once-a-day submission guard).
 // - ai_results rows (always AI Practice, no topic check needed): flat
 //   0.25hr each.
 // See docs/superpowers/specs/2026-08-13-cpd-hours-revision-design.md.
 async function cpdHoursThisYear(outlet, name) {
-  const [videoAndModule, aiPractice] = await Promise.all([
+  const [video, moduleQuiz, aiPractice] = await Promise.all([
     pool.query(
       `select coalesce(sum(coalesce(vt.hours, 1)), 0) as hours
        from results r
-       left join video_trainings vt on vt.topic = r.topic
+       join video_trainings vt on vt.topic = r.topic
        where r.outlet = $1 and r.name = $2
          and extract(year from r.created_at) = extract(year from now())`,
+      [outlet, name]
+    ),
+    pool.query(
+      `select count(distinct r.topic) as topics
+       from results r
+       where r.outlet = $1 and r.name = $2
+         and extract(year from r.created_at) = extract(year from now())
+         and not exists (select 1 from video_trainings vt where vt.topic = r.topic)`,
       [outlet, name]
     ),
     pool.query(
@@ -38,7 +52,7 @@ async function cpdHoursThisYear(outlet, name) {
       [outlet, name]
     ),
   ]);
-  return Number(videoAndModule.rows[0].hours) + Number(aiPractice.rows[0].hours);
+  return Number(video.rows[0].hours) + Number(moduleQuiz.rows[0].topics) + Number(aiPractice.rows[0].hours);
 }
 
 // Mirrors GAS's buildScopedData, minus reports/content/referenceDocs
