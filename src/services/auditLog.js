@@ -24,3 +24,11 @@ export async function logAuditSafe(fields) {
     console.error('logAudit failed:', err.message);
   }
 }
+
+const RETENTION_DAYS = 14;
+
+// Piggybacks on sessionRevocationCache's existing maintenance loop — no
+// separate cron mechanism in this app (same pattern as pruneOldSessions).
+export async function pruneOldAuditLog() {
+  await pool.query(`delete from audit_log where created_at < now() - interval '${RETENTION_DAYS} days'`);
+}

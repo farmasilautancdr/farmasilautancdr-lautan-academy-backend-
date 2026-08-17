@@ -1,4 +1,5 @@
 import { pool } from '../config/db.js';
+import { pruneOldAuditLog } from './auditLog.js';
 
 // In-memory cache of currently-revoked, not-yet-naturally-expired session
 // ids. requireAuth checks against this instead of hitting the DB on every
@@ -45,5 +46,6 @@ export function startSessionMaintenanceLoop() {
   setInterval(() => {
     refreshRevocationCache().catch((err) => console.error('refreshRevocationCache failed:', err.message));
     pruneOldSessions().catch((err) => console.error('pruneOldSessions failed:', err.message));
+    pruneOldAuditLog().catch((err) => console.error('pruneOldAuditLog failed:', err.message));
   }, POLL_INTERVAL_MS);
 }
