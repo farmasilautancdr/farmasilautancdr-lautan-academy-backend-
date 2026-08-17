@@ -185,11 +185,14 @@ dataRouter.post('/results', requireAuth, async (req, res) => {
   }
 
   const { rows } = await pool.query(
-    'select created_at from results where name=$1 and outlet=$2 and topic=$3 order by created_at desc limit 1',
+    'select created_at, score, percentage from results where name=$1 and outlet=$2 and topic=$3 order by created_at desc limit 1',
     [name, outlet, topic]
   );
   const alreadyToday = rows[0] && isSameCalendarDay(new Date(rows[0].created_at), new Date());
-  if (alreadyToday) return res.json({ status: 'ok' });
+  if (alreadyToday) {
+    const [prevScore, prevTotal] = (rows[0].score || '0/0').split('/').map(Number);
+    return res.json({ status: 'ok', score: prevScore, total: prevTotal, percentage: parseInt(rows[0].percentage) || 0 });
+  }
 
   const { rows: questions } = await pool.query("select * from standard_questions where topic = $1 and status = 'active' order by id", [topic]);
   if (!questions.length) return res.status(404).json({ status: 'error', error: 'No questions found for this module.' });
@@ -254,11 +257,14 @@ dataRouter.post('/ai-results', requireAuth, async (req, res) => {
   if (!validScope) return res.status(403).json({ status: 'unauthorized' });
 
   const { rows } = await pool.query(
-    'select created_at from ai_results where name=$1 and outlet=$2 and passcode=$3 order by created_at desc limit 1',
+    'select created_at, score, percentage from ai_results where name=$1 and outlet=$2 and passcode=$3 order by created_at desc limit 1',
     [name, outlet, passcode]
   );
   const alreadyToday = rows[0] && isSameCalendarDay(new Date(rows[0].created_at), new Date());
-  if (alreadyToday) return res.json({ status: 'ok' });
+  if (alreadyToday) {
+    const [prevScore, prevTotal] = (rows[0].score || '0/0').split('/').map(Number);
+    return res.json({ status: 'ok', score: prevScore, total: prevTotal, percentage: parseInt(rows[0].percentage) || 0 });
+  }
 
   const { rows: quizRows } = await pool.query('select questions_json from ai_quizzes where outlet=$1 and passcode=$2', [outlet, passcode]);
   const stored = quizRows[0]?.questions_json;
@@ -321,11 +327,14 @@ dataRouter.post('/video-results', requireAuth, async (req, res) => {
   }
 
   const { rows } = await pool.query(
-    'select created_at from results where name=$1 and outlet=$2 and topic=$3 order by created_at desc limit 1',
+    'select created_at, score, percentage from results where name=$1 and outlet=$2 and topic=$3 order by created_at desc limit 1',
     [name, outlet, topic]
   );
   const alreadyToday = rows[0] && isSameCalendarDay(new Date(rows[0].created_at), new Date());
-  if (alreadyToday) return res.json({ status: 'ok' });
+  if (alreadyToday) {
+    const [prevScore, prevTotal] = (rows[0].score || '0/0').split('/').map(Number);
+    return res.json({ status: 'ok', score: prevScore, total: prevTotal, percentage: parseInt(rows[0].percentage) || 0 });
+  }
 
   const { rows: questions } = await pool.query("select * from video_questions where topic = $1 and status = 'active' order by id", [topic]);
   if (!questions.length) return res.status(404).json({ status: 'error', error: 'No questions found for this video.' });
