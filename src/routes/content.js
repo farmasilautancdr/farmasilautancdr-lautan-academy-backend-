@@ -50,32 +50,56 @@ contentRouter.post('/upload', requireAuth, requireScope('supervisor'), upload.si
 });
 
 // Company-wide, not outlet-scoped — any authenticated role can read.
+// QuizReady mirrors GET /video-trainings' own exists-check: a
+// quiz_required entry only becomes actionable for staff once it has
+// at least one active question, so a staff member can't tap into a
+// dead end (see docs/superpowers/specs/2026-08-17-content-reading-quiz-design.md).
 contentRouter.get('/', requireAuth, async (req, res) => {
-  const { rows } = await pool.query('select id, topic, category, title, body, link, created_at from content order by topic, title');
+  const { rows } = await pool.query(`
+    select c.id, c.topic, c.category, c.title, c.body, c.link, c.created_at,
+      c.quiz_required, c.hours,
+      exists (
+        select 1 from content_questions cq
+        where cq.topic = c.topic and cq.status = 'active'
+      ) as quiz_ready
+    from content c
+    order by c.topic, c.title
+  `);
   res.json({
-    content: rows.map(c => ({ ID: c.id, Topic: c.topic, Category: c.category, Title: c.title, Body: c.body, Link: c.link, Timestamp: c.created_at })),
+    content: rows.map(c => ({
+      ID: c.id, Topic: c.topic, Category: c.category, Title: c.title, Body: c.body, Link: c.link, Timestamp: c.created_at,
+      QuizRequired: c.quiz_required, Hours: Number(c.hours), QuizReady: c.quiz_ready,
+    })),
   });
 });
 
-// Matches GAS's handleSaveContent gating — Supervisor only.
+// Matches GAS's handleSaveContent gating — Supervisor only. quizRequired/
+// hours are optional (default false/1) so existing callers/behavior are
+// unchanged; hours is only ever read when quizRequired is true.
 contentRouter.post('/', requireAuth, requireScope('supervisor'), async (req, res) => {
   const topic = (req.body.topic || '').toString().trim();
   const category = (req.body.category || '').toString().trim();
   const title = (req.body.title || '').toString().trim();
   const body = (req.body.body || '').toString().trim();
   const link = (req.body.link || '').toString().trim();
+  const quizRequired = !!req.body.quizRequired;
+  const hoursRaw = req.body.hours;
+  const hours = hoursRaw === undefined || hoursRaw === null || hoursRaw === '' ? 1 : Number(hoursRaw);
   if (!topic || !title || !body) {
     return res.status(400).json({ status: 'error', error: 'Topic, title, and body are required.' });
   }
+  if (quizRequired && (!Number.isFinite(hours) || hours <= 0)) {
+    return res.status(400).json({ status: 'error', error: 'Hours must be a positive number.' });
+  }
   const { rows } = await pool.query(
-    'insert into content (topic, category, title, body, link) values ($1,$2,$3,$4,$5) returning id',
-    [topic, category, title, body, link]
+    'insert into content (topic, category, title, body, link, quiz_required, hours) values ($1,$2,$3,$4,$5,$6,$7) returning id',
+    [topic, category, title, body, link, quizRequired, quizRequired ? hours : 1]
   );
   logAuditSafe({
     actorType: req.session.scopeType,
     actorKey: req.session.scopeKey,
     action: 'content.add',
-    summary: `Added content "${title}" (${topic})`,
+    summary: `Added content "${title}" (${topic})${quizRequired ? ` [quiz required, ${hours}h]` : ''}`,
   });
   res.json({ status: 'ok', id: rows[0].id });
 });
