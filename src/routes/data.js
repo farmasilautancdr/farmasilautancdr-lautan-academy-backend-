@@ -12,22 +12,26 @@ function isSameCalendarDay(a, b) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
-// CPD hours this calendar year, summed across all three sources:
-// - results rows whose topic matches a video_trainings topic: that
-//   video's real hours, every attempt counts (retakes stack).
-// - results rows whose topic does NOT match a video_trainings topic
-//   (i.e. Module Quiz): flat 1hr, but capped to the first attempt per
-//   topic per year — count(distinct topic) rather than count(*), since
-//   the rate is flat this is equivalent to "only the first attempt
-//   counts" without needing to pick out which row is literally first.
-//   Retaking the same topic on a different day still no-ops CPD hours,
-//   it just isn't blocked from re-attempting (see POST /results'
-//   same-day dedup for the separate once-a-day submission guard).
+// CPD hours this calendar year, summed across four sources:
+// - Video Training: real per-video hours, every attempt stacks.
+// - Content quiz (Browse Courses reading quiz): real per-entry hours,
+//   capped to the first attempt per topic per year (distinct on r.topic,
+//   earliest created_at) — unlike Module Quiz's uniform rate, each
+//   Content topic can carry a different Supervisor-set hours value, so
+//   which attempt is "first" actually determines the sum, not just how
+//   many distinct topics were attempted.
+// - Module Quiz: flat 1hr, capped to the first attempt per topic per
+//   year (count(distinct topic) — equivalent to "first attempt only"
+//   since the rate is flat). Explicitly excludes both Video Training and
+//   Content-quiz topics so a topic is never double-counted across
+//   sources (on top of the existing "topic namespaces don't collide by
+//   design" convention).
 // - ai_results rows (always AI Practice, no topic check needed): flat
-//   0.25hr each.
-// See docs/superpowers/specs/2026-08-13-cpd-hours-revision-design.md.
+//   0.25hr each, uncapped.
+// See docs/superpowers/specs/2026-08-13-cpd-hours-revision-design.md and
+// docs/superpowers/specs/2026-08-17-content-reading-quiz-design.md.
 async function cpdHoursThisYear(outlet, name) {
-  const [video, moduleQuiz, aiPractice] = await Promise.all([
+  const [video, contentQuiz, moduleQuiz, aiPractice] = await Promise.all([
     pool.query(
       `select coalesce(sum(coalesce(vt.hours, 1)), 0) as hours
        from results r
@@ -37,11 +41,24 @@ async function cpdHoursThisYear(outlet, name) {
       [outlet, name]
     ),
     pool.query(
+      `select coalesce(sum(first_attempts.hours), 0) as hours
+       from (
+         select distinct on (r.topic) r.topic, c.hours
+         from results r
+         join content c on c.topic = r.topic and c.quiz_required
+         where r.outlet = $1 and r.name = $2
+           and extract(year from r.created_at) = extract(year from now())
+         order by r.topic, r.created_at asc
+       ) first_attempts`,
+      [outlet, name]
+    ),
+    pool.query(
       `select count(distinct r.topic) as topics
        from results r
        where r.outlet = $1 and r.name = $2
          and extract(year from r.created_at) = extract(year from now())
-         and not exists (select 1 from video_trainings vt where vt.topic = r.topic)`,
+         and not exists (select 1 from video_trainings vt where vt.topic = r.topic)
+         and not exists (select 1 from content c where c.topic = r.topic and c.quiz_required)`,
       [outlet, name]
     ),
     pool.query(
@@ -52,7 +69,7 @@ async function cpdHoursThisYear(outlet, name) {
       [outlet, name]
     ),
   ]);
-  return Number(video.rows[0].hours) + Number(moduleQuiz.rows[0].topics) + Number(aiPractice.rows[0].hours);
+  return Number(video.rows[0].hours) + Number(contentQuiz.rows[0].hours) + Number(moduleQuiz.rows[0].topics) + Number(aiPractice.rows[0].hours);
 }
 
 // Mirrors GAS's buildScopedData, minus reports/content/referenceDocs
