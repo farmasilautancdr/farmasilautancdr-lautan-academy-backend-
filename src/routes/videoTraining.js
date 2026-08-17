@@ -194,3 +194,88 @@ videoQuestionsRouter.post('/:id/check', requireAuth, async (req, res) => {
   const correctIndex = rows[0].correct;
   res.json({ correct: chosen === correctIndex, correctIndex });
 });
+
+// Supervisor-only CRUD over the quiz bank itself — GET (list by topic) and
+// POST /:id/check already existed for taking a quiz; these three add
+// management. `topic` is validated against real video_trainings rows (not
+// just non-empty) because the topic/video_trainings join elsewhere in this
+// file is a plain string match with no FK — a typo here would silently
+// orphan the question with no error anywhere.
+async function topicExists(topic) {
+  const { rows } = await pool.query(
+    'select 1 from video_trainings where topic = $1 limit 1',
+    [topic]
+  );
+  return rows.length > 0;
+}
+
+function validateQuestionBody(body) {
+  const topic = (body.topic || '').toString().trim();
+  const type = (body.type || '').toString().trim();
+  const question_en = (body.question_en || '').toString().trim();
+  const question_ms = (body.question_ms || '').toString().trim();
+  const opt1_en = (body.opt1_en || '').toString().trim();
+  const opt2_en = (body.opt2_en || '').toString().trim();
+  const opt3_en = (body.opt3_en || '').toString().trim();
+  const opt4_en = (body.opt4_en || '').toString().trim();
+  const opt1_ms = (body.opt1_ms || '').toString().trim();
+  const opt2_ms = (body.opt2_ms || '').toString().trim();
+  const opt3_ms = (body.opt3_ms || '').toString().trim();
+  const opt4_ms = (body.opt4_ms || '').toString().trim();
+  const correct = parseInt(body.correct);
+
+  if (!['mcq', 'tf'].includes(type)) {
+    return { error: 'Type must be mcq or tf.' };
+  }
+  if (!topic) {
+    return { error: 'Topic is required.' };
+  }
+  if (!question_en || !question_ms) {
+    return { error: 'Question text (EN and MS) is required.' };
+  }
+  if (type === 'mcq') {
+    if (!opt1_en || !opt2_en || !opt3_en || !opt4_en || !opt1_ms || !opt2_ms || !opt3_ms || !opt4_ms) {
+      return { error: 'All 4 options (EN and MS) are required for a multiple-choice question.' };
+    }
+    if (!Number.isInteger(correct) || correct < 0 || correct > 3) {
+      return { error: 'Correct answer must be option 1-4 for a multiple-choice question.' };
+    }
+    return {
+      row: { topic, question_en, question_ms, opt1_en, opt2_en, opt3_en, opt4_en, opt1_ms, opt2_ms, opt3_ms, opt4_ms, correct },
+    };
+  }
+  // type === 'tf'
+  if (!opt1_en || !opt2_en || !opt1_ms || !opt2_ms) {
+    return { error: 'Both options (EN and MS) are required for a True/False question.' };
+  }
+  if (!Number.isInteger(correct) || correct < 0 || correct > 1) {
+    return { error: 'Correct answer must be option 1-2 for a True/False question.' };
+  }
+  return {
+    row: { topic, question_en, question_ms, opt1_en, opt2_en, opt3_en: '', opt4_en: '', opt1_ms, opt2_ms, opt3_ms: '', opt4_ms: '', correct },
+  };
+}
+
+videoQuestionsRouter.post('/', requireAuth, requireScope('supervisor'), async (req, res) => {
+  const { error, row } = validateQuestionBody(req.body);
+  if (error) return res.status(400).json({ status: 'error', error });
+
+  if (!(await topicExists(row.topic))) {
+    return res.status(400).json({ status: 'error', error: `Unknown topic '${row.topic}' — no course with this topic exists.` });
+  }
+
+  const { rows } = await pool.query(
+    `insert into video_questions
+      (topic, question_en, question_ms, opt1_en, opt2_en, opt3_en, opt4_en, opt1_ms, opt2_ms, opt3_ms, opt4_ms, correct, status)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'active')
+     returning id`,
+    [row.topic, row.question_en, row.question_ms, row.opt1_en, row.opt2_en, row.opt3_en, row.opt4_en, row.opt1_ms, row.opt2_ms, row.opt3_ms, row.opt4_ms, row.correct]
+  );
+  logAuditSafe({
+    actorType: req.session.scopeType,
+    actorKey: req.session.scopeKey,
+    action: 'video_question.add',
+    summary: `Added question to topic "${row.topic}": ${row.question_en.slice(0, 60)}`,
+  });
+  res.json({ status: 'ok', id: rows[0].id });
+});
