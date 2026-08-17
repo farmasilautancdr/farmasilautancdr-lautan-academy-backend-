@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../config/db.js';
 import { requireAuth } from '../middleware/auth.js';
-async function outletsForArea(areaId) {
+export async function outletsForArea(areaId) {
   const { rows } = await pool.query('select code from store_outlets where area_id = $1 and active', [areaId]);
   return rows.map(r => r.code);
 }

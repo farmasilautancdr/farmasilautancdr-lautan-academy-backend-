@@ -19,6 +19,7 @@ import { auditLogRouter } from './routes/auditLog.js';
 import { masterBackupRouter } from './routes/masterBackup.js';
 import { masterSessionsRouter } from './routes/masterSessions.js';
 import { masterImpersonateRouter } from './routes/masterImpersonate.js';
+import { pharmacistComplianceRouter } from './routes/pharmacistCompliance.js';
 import { startSessionMaintenanceLoop } from './services/sessionRevocationCache.js';
 import { checkMaintenance } from './middleware/auth.js';
 
@@ -45,6 +46,7 @@ app.use('/master/audit-log', auditLogRouter);
 app.use('/master/sessions', masterSessionsRouter);
 app.use('/master/impersonate', masterImpersonateRouter);
 app.use('/master/outlets', masterOutletsRouter);
+app.use('/pharmacist-compliance', checkMaintenance, pharmacistComplianceRouter);
 app.use(masterBackupRouter);
 
 app.get('/health', (req, res) => res.json({ ok: true }));
