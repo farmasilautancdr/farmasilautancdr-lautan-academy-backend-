@@ -132,16 +132,30 @@ dataRouter.get('/scoped-data', requireAuth, async (req, res) => {
 });
 
 // Field names match GAS's Sheet-header casing exactly — the frontend reads
-// r.Outlet, r["Staff Name"], r["Question Text"], etc. verbatim. Reports uses
-// "Fluency" for the competency column — matches GAS's v1.34 relabel (UI
-// calls it "Competency", sheet column name stayed "Fluency").
+// r.Outlet, r["Staff Name"], r["Question Text En"], etc. verbatim. Reports
+// uses "Fluency" for the competency column — matches GAS's v1.34 relabel
+// (UI calls it "Competency", sheet column name stayed "Fluency"). Wrong-
+// answer fields are bilingual (En/Ms) so Quiz History can render a past
+// wrong answer in whichever language is currently active — see
+// scripts/migrate-wrong-answers-bilingual.js; Ms may be null for rows
+// written before that migration.
 function toResponse(results, wrong, aiResults, aiWrong, reports = []) {
   return {
     authorized: true,
     results: results.map(r => ({ Timestamp: r.created_at, AttemptID: r.attempt_id, Name: r.name, Outlet: r.outlet, Score: r.score, Percentage: r.percentage, Topic: r.topic })),
-    wrongAnswers: wrong.map(w => ({ Timestamp: w.created_at, AttemptID: w.attempt_id, 'Staff Name': w.staff_name, Outlet: w.outlet, Topic: w.topic, 'Question Text': w.question, 'User Choice': w.chosen, 'Correct Answer': w.correct })),
+    wrongAnswers: wrong.map(w => ({
+      Timestamp: w.created_at, AttemptID: w.attempt_id, 'Staff Name': w.staff_name, Outlet: w.outlet, Topic: w.topic,
+      'Question Text En': w.question_en, 'Question Text Ms': w.question_ms,
+      'User Choice En': w.chosen_en, 'User Choice Ms': w.chosen_ms,
+      'Correct Answer En': w.correct_en, 'Correct Answer Ms': w.correct_ms,
+    })),
     aiResults: aiResults.map(r => ({ Timestamp: r.created_at, AttemptID: r.attempt_id, Name: r.name, Outlet: r.outlet, Score: r.score, Percentage: r.percentage, Topic: r.topic, Passcode: r.passcode })),
-    aiWrongAnswers: aiWrong.map(w => ({ Timestamp: w.created_at, AttemptID: w.attempt_id, 'Staff Name': w.staff_name, Outlet: w.outlet, Topic: w.topic, 'Question Text': w.question, 'User Choice': w.chosen, 'Correct Answer': w.correct })),
+    aiWrongAnswers: aiWrong.map(w => ({
+      Timestamp: w.created_at, AttemptID: w.attempt_id, 'Staff Name': w.staff_name, Outlet: w.outlet, Topic: w.topic,
+      'Question Text En': w.question_en, 'Question Text Ms': w.question_ms,
+      'User Choice En': w.chosen_en, 'User Choice Ms': w.chosen_ms,
+      'Correct Answer En': w.correct_en, 'Correct Answer Ms': w.correct_ms,
+    })),
     reports: reports.map(r => ({
       Timestamp: r.created_at, Manager: r.manager, Outlet: r.outlet, 'Staff Name': r.staff_name,
       'Quiz Score': r.quiz_score, 'Training Title': r.topic, 'Skill Level': r.skill_level,
@@ -192,8 +206,13 @@ dataRouter.post('/results', requireAuth, async (req, res) => {
     if (chosen === q.correct) {
       score++;
     } else {
-      const opts = [q.opt1_en, q.opt2_en, q.opt3_en, q.opt4_en];
-      wrongRows.push({ question: q.question_en, chosen: opts[chosen] ?? '(no answer)', correct: opts[q.correct] ?? '' });
+      const optsEn = [q.opt1_en, q.opt2_en, q.opt3_en, q.opt4_en];
+      const optsMs = [q.opt1_ms, q.opt2_ms, q.opt3_ms, q.opt4_ms];
+      wrongRows.push({
+        questionEn: q.question_en, questionMs: q.question_ms,
+        chosenEn: optsEn[chosen] ?? '(no answer)', chosenMs: optsMs[chosen] ?? '(tiada jawapan)',
+        correctEn: optsEn[q.correct] ?? '', correctMs: optsMs[q.correct] ?? '',
+      });
     }
   }
   const total = questions.length;
@@ -209,8 +228,8 @@ dataRouter.post('/results', requireAuth, async (req, res) => {
   );
   for (const w of wrongRows) {
     await pool.query(
-      'insert into wrong_answers (attempt_id, outlet, staff_name, topic, question, chosen, correct) values ($1,$2,$3,$4,$5,$6,$7)',
-      [attemptId, outlet, name, topic, w.question, w.chosen, w.correct]
+      'insert into wrong_answers (attempt_id, outlet, staff_name, topic, question_en, question_ms, chosen_en, chosen_ms, correct_en, correct_ms) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      [attemptId, outlet, name, topic, w.questionEn, w.questionMs, w.chosenEn, w.chosenMs, w.correctEn, w.correctMs]
     );
   }
   res.json({ status: 'ok', score, total, percentage });
@@ -259,8 +278,13 @@ dataRouter.post('/ai-results', requireAuth, async (req, res) => {
     if (chosen === q.correct) {
       score++;
     } else {
-      const opts = [q.opt1_en, q.opt2_en, q.opt3_en, q.opt4_en];
-      wrongRows.push({ question: q.question_en, chosen: opts[chosen] ?? '(no answer)', correct: opts[q.correct] ?? '' });
+      const optsEn = [q.opt1_en, q.opt2_en, q.opt3_en, q.opt4_en];
+      const optsMs = [q.opt1_ms, q.opt2_ms, q.opt3_ms, q.opt4_ms];
+      wrongRows.push({
+        questionEn: q.question_en, questionMs: q.question_ms,
+        chosenEn: optsEn[chosen] ?? '(no answer)', chosenMs: optsMs[chosen] ?? '(tiada jawapan)',
+        correctEn: optsEn[q.correct] ?? '', correctMs: optsMs[q.correct] ?? '',
+      });
     }
   });
   const total = stored.length;
@@ -272,8 +296,8 @@ dataRouter.post('/ai-results', requireAuth, async (req, res) => {
   );
   for (const w of wrongRows) {
     await pool.query(
-      'insert into ai_wrong_answers (attempt_id, outlet, staff_name, topic, question, chosen, correct) values ($1,$2,$3,$4,$5,$6,$7)',
-      [attemptId, outlet, name, topic, w.question, w.chosen, w.correct]
+      'insert into ai_wrong_answers (attempt_id, outlet, staff_name, topic, question_en, question_ms, chosen_en, chosen_ms, correct_en, correct_ms) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      [attemptId, outlet, name, topic, w.questionEn, w.questionMs, w.chosenEn, w.chosenMs, w.correctEn, w.correctMs]
     );
   }
   res.json({ status: 'ok', score, total, percentage });
@@ -316,8 +340,13 @@ dataRouter.post('/video-results', requireAuth, async (req, res) => {
     if (chosen === q.correct) {
       score++;
     } else {
-      const opts = [q.opt1_en, q.opt2_en, q.opt3_en, q.opt4_en];
-      wrongRows.push({ question: q.question_en, chosen: opts[chosen] ?? '(no answer)', correct: opts[q.correct] ?? '' });
+      const optsEn = [q.opt1_en, q.opt2_en, q.opt3_en, q.opt4_en];
+      const optsMs = [q.opt1_ms, q.opt2_ms, q.opt3_ms, q.opt4_ms];
+      wrongRows.push({
+        questionEn: q.question_en, questionMs: q.question_ms,
+        chosenEn: optsEn[chosen] ?? '(no answer)', chosenMs: optsMs[chosen] ?? '(tiada jawapan)',
+        correctEn: optsEn[q.correct] ?? '', correctMs: optsMs[q.correct] ?? '',
+      });
     }
   }
   const total = questions.length;
@@ -330,8 +359,8 @@ dataRouter.post('/video-results', requireAuth, async (req, res) => {
   );
   for (const w of wrongRows) {
     await pool.query(
-      'insert into wrong_answers (attempt_id, outlet, staff_name, topic, question, chosen, correct) values ($1,$2,$3,$4,$5,$6,$7)',
-      [attemptId, outlet, name, topic, w.question, w.chosen, w.correct]
+      'insert into wrong_answers (attempt_id, outlet, staff_name, topic, question_en, question_ms, chosen_en, chosen_ms, correct_en, correct_ms) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      [attemptId, outlet, name, topic, w.questionEn, w.questionMs, w.chosenEn, w.chosenMs, w.correctEn, w.correctMs]
     );
   }
   res.json({ status: 'ok', score, total, percentage });

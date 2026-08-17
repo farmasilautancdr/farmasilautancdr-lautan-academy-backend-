@@ -52,15 +52,23 @@ create table if not exists results (
   created_at timestamptz not null default now()
 );
 
+-- question/chosen/correct are bilingual (_en/_ms) so Quiz History can
+-- re-render a past wrong answer in whichever language is currently active,
+-- not just whatever language the staff happened to be viewing at grading
+-- time — see scripts/migrate-wrong-answers-bilingual.js. _ms is nullable:
+-- rows written before that migration only ever have _en.
 create table if not exists wrong_answers (
   id bigserial primary key,
   attempt_id text,
   outlet text not null,
   staff_name text not null,
   topic text,
-  question text,
-  chosen text,
-  correct text,
+  question_en text,
+  question_ms text,
+  chosen_en text,
+  chosen_ms text,
+  correct_en text,
+  correct_ms text,
   created_at timestamptz not null default now()
 );
 
@@ -99,15 +107,19 @@ create table if not exists ai_results (
   created_at timestamptz not null default now()
 );
 
+-- Bilingual for the same reason as wrong_answers above.
 create table if not exists ai_wrong_answers (
   id bigserial primary key,
   attempt_id text,
   outlet text not null,
   staff_name text not null,
   topic text,
-  question text,
-  chosen text,
-  correct text,
+  question_en text,
+  question_ms text,
+  chosen_en text,
+  chosen_ms text,
+  correct_en text,
+  correct_ms text,
   created_at timestamptz not null default now()
 );
 
