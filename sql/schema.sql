@@ -293,3 +293,24 @@ alter table video_trainings alter column youtube_url drop not null;
 alter table video_trainings add column if not exists kind text not null default 'video';
 alter table video_trainings add column if not exists pharmacist_only boolean not null default false;
 alter table video_trainings add column if not exists body text;
+
+-- Browse Courses reading quiz + CPD. quiz_required/hours mirror
+-- video_trainings' opt-in-per-entry pattern. content_questions is a
+-- field-for-field copy of video_questions — same no-FK, topic-text-keyed
+-- convention as every other question bank in this app. See
+-- docs/superpowers/specs/2026-08-17-content-reading-quiz-design.md.
+alter table content add column if not exists quiz_required boolean not null default false;
+alter table content add column if not exists hours numeric not null default 1;
+
+create table if not exists content_questions (
+  id bigserial primary key,
+  topic text not null,
+  question_en text not null,
+  question_ms text not null,
+  opt1_en text, opt2_en text, opt3_en text, opt4_en text,
+  opt1_ms text, opt2_ms text, opt3_ms text, opt4_ms text,
+  correct int not null,
+  status text not null default 'active',
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_content_questions_topic on content_questions (topic);
