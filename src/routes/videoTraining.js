@@ -279,3 +279,37 @@ videoQuestionsRouter.post('/', requireAuth, requireScope('supervisor'), async (r
   });
   res.json({ status: 'ok', id: rows[0].id });
 });
+
+// Full-row overwrite, not partial PATCH semantics — a question's fields
+// are all interdependent on `type` (tf forces opt3/opt4 blank), so
+// re-validating and re-writing every field avoids a stale mismatched
+// field surviving a type change.
+videoQuestionsRouter.patch('/:id', requireAuth, requireScope('supervisor'), async (req, res) => {
+  const id = parseInt(req.params.id);
+  const { rows: existingRows } = await pool.query('select id from video_questions where id = $1', [id]);
+  if (!existingRows[0]) return res.status(404).json({ status: 'error', error: 'Question not found.' });
+
+  const { error, row } = validateQuestionBody(req.body);
+  if (error) return res.status(400).json({ status: 'error', error });
+
+  if (!(await topicExists(row.topic))) {
+    return res.status(400).json({ status: 'error', error: `Unknown topic '${row.topic}' — no course with this topic exists.` });
+  }
+
+  await pool.query(
+    `update video_questions set
+      topic=$1, question_en=$2, question_ms=$3,
+      opt1_en=$4, opt2_en=$5, opt3_en=$6, opt4_en=$7,
+      opt1_ms=$8, opt2_ms=$9, opt3_ms=$10, opt4_ms=$11,
+      correct=$12
+     where id=$13`,
+    [row.topic, row.question_en, row.question_ms, row.opt1_en, row.opt2_en, row.opt3_en, row.opt4_en, row.opt1_ms, row.opt2_ms, row.opt3_ms, row.opt4_ms, row.correct, id]
+  );
+  logAuditSafe({
+    actorType: req.session.scopeType,
+    actorKey: req.session.scopeKey,
+    action: 'video_question.update',
+    summary: `Updated question ${id} (topic "${row.topic}")`,
+  });
+  res.json({ status: 'ok' });
+});
