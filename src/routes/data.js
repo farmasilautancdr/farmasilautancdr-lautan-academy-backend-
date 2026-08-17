@@ -388,3 +388,70 @@ dataRouter.post('/video-results', requireAuth, async (req, res) => {
   }
   res.json({ status: 'ok', score, total, percentage });
 });
+
+// Staff-triggered: save a completed Browse-Courses reading-quiz attempt.
+// Direct copy of POST /video-results (server-authoritative grading,
+// same-day no-op, same wrong_answers write) except it reads from
+// content_questions instead of video_questions. Writes into the same
+// `results` table Module Quiz/Video Training already share — topic
+// membership in `content` (where quiz_required) is the third
+// discriminator. Retail-only, same as Module Quiz/Video Training. See
+// docs/superpowers/specs/2026-08-17-content-reading-quiz-design.md.
+dataRouter.post('/content-results', requireAuth, async (req, res) => {
+  const name = (req.body.name || '').toString().trim().toUpperCase();
+  const outlet = (req.body.outlet || '').toString().trim().toUpperCase();
+  const topic = (req.body.topic || 'N/A').toString().trim();
+  const answers = Array.isArray(req.body.answers) ? req.body.answers : [];
+
+  if (req.session.scopeType !== 'staff_retail' || req.session.scopeKey !== `${outlet}|${name}`) {
+    return res.status(403).json({ status: 'unauthorized' });
+  }
+
+  const { rows } = await pool.query(
+    'select created_at, score, percentage from results where name=$1 and outlet=$2 and topic=$3 order by created_at desc limit 1',
+    [name, outlet, topic]
+  );
+  const alreadyToday = rows[0] && isSameCalendarDay(new Date(rows[0].created_at), new Date());
+  if (alreadyToday) {
+    const [prevScore, prevTotal] = (rows[0].score || '0/0').split('/').map(Number);
+    return res.json({ status: 'ok', score: prevScore, total: prevTotal, percentage: parseInt(rows[0].percentage) || 0 });
+  }
+
+  const { rows: questions } = await pool.query("select * from content_questions where topic = $1 and status = 'active' order by id", [topic]);
+  if (!questions.length) return res.status(404).json({ status: 'error', error: 'No questions found for this material.' });
+
+  const chosenById = new Map();
+  for (const a of answers) chosenById.set(parseInt(a.id), parseInt(a.chosen));
+
+  let score = 0;
+  const wrongRows = [];
+  for (const q of questions) {
+    const chosen = chosenById.get(parseInt(q.id));
+    if (chosen === q.correct) {
+      score++;
+    } else {
+      const optsEn = [q.opt1_en, q.opt2_en, q.opt3_en, q.opt4_en];
+      const optsMs = [q.opt1_ms, q.opt2_ms, q.opt3_ms, q.opt4_ms];
+      wrongRows.push({
+        questionEn: q.question_en, questionMs: q.question_ms,
+        chosenEn: optsEn[chosen] ?? '(no answer)', chosenMs: optsMs[chosen] ?? '(tiada jawapan)',
+        correctEn: optsEn[q.correct] ?? '', correctMs: optsMs[q.correct] ?? '',
+      });
+    }
+  }
+  const total = questions.length;
+  const percentage = Math.round((score / total) * 100);
+  const attemptId = `CNT${Date.now()}`;
+
+  await pool.query(
+    'insert into results (attempt_id, outlet, name, topic, score, percentage) values ($1,$2,$3,$4,$5,$6)',
+    [attemptId, outlet, name, topic, `${score}/${total}`, `${percentage}%`]
+  );
+  for (const w of wrongRows) {
+    await pool.query(
+      'insert into wrong_answers (attempt_id, outlet, staff_name, topic, question_en, question_ms, chosen_en, chosen_ms, correct_en, correct_ms) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      [attemptId, outlet, name, topic, w.questionEn, w.questionMs, w.chosenEn, w.chosenMs, w.correctEn, w.correctMs]
+    );
+  }
+  res.json({ status: 'ok', score, total, percentage });
+});
