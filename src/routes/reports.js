@@ -32,6 +32,14 @@ reportsRouter.post('/', requireAuth, requireScope('area_manager'), async (req, r
   if (!staffName || !topic || !manager) {
     return res.status(400).json({ status: 'error', message: 'Staff, topic, and manager are required.' });
   }
+  const gaps = (req.body.gaps || '').toString().trim();
+  const rec = (req.body.rec || '').toString().trim();
+  const productKnowledgeComments = (req.body.productKnowledgeComments || '').toString().trim();
+  const competencyRaw = req.body.competency;
+  const competency = competencyRaw != null && competencyRaw !== '' ? parseInt(competencyRaw) : NaN;
+  if (!gaps || !rec || !productKnowledgeComments || isNaN(competency) || competency < 0 || competency > 10) {
+    return res.status(400).json({ status: 'error', message: 'Competency, product knowledge comments, performance gaps, and recommendations are all required.' });
+  }
 
   const { rows } = await pool.query(
     'select manager, created_at from reports where outlet=$1 and staff_name=$2 and topic=$3',
@@ -50,10 +58,10 @@ reportsRouter.post('/', requireAuth, requireScope('area_manager'), async (req, r
     outlet, staffName, manager, topic,
     (req.body.quizScore || '').toString(),
     (req.body.skillLevel || '').toString(),
-    (req.body.gaps || '').toString(),
-    (req.body.rec || '').toString(),
-    req.body.competency != null && req.body.competency !== '' ? parseInt(req.body.competency) : null,
-    (req.body.productKnowledgeComments || '').toString(),
+    gaps,
+    rec,
+    competency,
+    productKnowledgeComments,
   ];
 
   if (existing) {
