@@ -86,8 +86,8 @@ contentRouter.post('/', requireAuth, requireScope('supervisor'), async (req, res
   const quizRequired = !!req.body.quizRequired;
   const hoursRaw = req.body.hours;
   const hours = hoursRaw === undefined || hoursRaw === null || hoursRaw === '' ? 1 : Number(hoursRaw);
-  if (!topic || !title || !body) {
-    return res.status(400).json({ status: 'error', error: 'Topic, title, and body are required.' });
+  if (!topic) {
+    return res.status(400).json({ status: 'error', error: 'Topic is required.' });
   }
   if (quizRequired && (!Number.isFinite(hours) || hours <= 0)) {
     return res.status(400).json({ status: 'error', error: 'Hours must be a positive number.' });
@@ -100,9 +100,46 @@ contentRouter.post('/', requireAuth, requireScope('supervisor'), async (req, res
     actorType: req.session.scopeType,
     actorKey: req.session.scopeKey,
     action: 'content.add',
-    summary: `Added content "${title}" (${topic})${quizRequired ? ` [quiz required, ${hours}h]` : ''}`,
+    summary: `Added content "${title || '(untitled)'}" (${topic})${quizRequired ? ` [quiz required, ${hours}h]` : ''}`,
   });
   res.json({ status: 'ok', id: rows[0].id });
+});
+
+// Lets Supervisor swap the attached file (or edit any field) in place —
+// same topic string stays intact, so content_questions (topic-text-keyed,
+// no FK — see schema.sql comment) never gets orphaned the way a
+// delete-then-recreate-with-a-typo'd-topic silently would.
+contentRouter.patch('/:id', requireAuth, requireScope('supervisor'), async (req, res) => {
+  const id = parseInt(req.params.id);
+  const { rows: existingRows } = await pool.query('select id from content where id = $1', [id]);
+  if (!existingRows[0]) return res.status(404).json({ status: 'error', error: 'Content entry not found.' });
+
+  const topic = (req.body.topic || '').toString().trim();
+  const category = (req.body.category || '').toString().trim();
+  const title = (req.body.title || '').toString().trim();
+  const body = (req.body.body || '').toString().trim();
+  const link = (req.body.link || '').toString().trim();
+  const quizRequired = !!req.body.quizRequired;
+  const hoursRaw = req.body.hours;
+  const hours = hoursRaw === undefined || hoursRaw === null || hoursRaw === '' ? 1 : Number(hoursRaw);
+  if (!topic) {
+    return res.status(400).json({ status: 'error', error: 'Topic is required.' });
+  }
+  if (quizRequired && (!Number.isFinite(hours) || hours <= 0)) {
+    return res.status(400).json({ status: 'error', error: 'Hours must be a positive number.' });
+  }
+
+  await pool.query(
+    'update content set topic=$1, category=$2, title=$3, body=$4, link=$5, quiz_required=$6, hours=$7 where id=$8',
+    [topic, category, title, body, link, quizRequired, quizRequired ? hours : 1, id]
+  );
+  logAuditSafe({
+    actorType: req.session.scopeType,
+    actorKey: req.session.scopeKey,
+    action: 'content.update',
+    summary: `Updated content "${title || '(untitled)'}" (${topic})${quizRequired ? ` [quiz required, ${hours}h]` : ''}`,
+  });
+  res.json({ status: 'ok' });
 });
 
 contentRouter.delete('/:id', requireAuth, requireScope('supervisor'), async (req, res) => {
