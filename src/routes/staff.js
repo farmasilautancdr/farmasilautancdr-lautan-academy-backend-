@@ -6,6 +6,23 @@ import { logAuditSafe } from '../services/auditLog.js';
 
 export const staffRouter = Router();
 
+// Same pattern as masterPurge.js's withTransaction — file-local, not shared,
+// per existing convention in this backend.
+async function withTransaction(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 function checkOutletScope(req, res, division, outlet) {
   const expectedType = division === 'warehouse' ? 'warehouse_manager' : 'outlet_manager';
   if (req.session.scopeType !== expectedType || req.session.scopeKey !== outlet) {
@@ -93,6 +110,63 @@ staffRouter.post('/reset-pin', requireAuth, requireScope('outlet_manager', 'ware
     actorKey: req.session.scopeKey,
     action: 'staff.reset_pin',
     summary: `Reset PIN for ${outlet}/${name}`,
+  });
+  res.json({ status: 'ok' });
+});
+
+// Corrects a wrongly-typed name. staff_roster has no FK to results/
+// wrong_answers/ai_results/ai_wrong_answers/reports — every query in this
+// codebase matches those by outlet+name text (same reasoning as
+// masterPurge.js's cascade delete) — so the rename cascades to them too,
+// inside one transaction, to keep a staff member's history under one name
+// instead of splitting it across old/new.
+staffRouter.patch('/rename', requireAuth, requireScope('outlet_manager', 'warehouse_manager'), async (req, res) => {
+  const division = (req.body.division || '').toString().trim().toLowerCase();
+  const outlet = (req.body.outlet || '').toString().trim().toUpperCase();
+  const oldName = (req.body.oldName || '').toString().trim().toUpperCase();
+  const newName = (req.body.newName || '').toString().trim().toUpperCase();
+  if (!checkOutletScope(req, res, division, outlet)) return;
+
+  if (!newName) {
+    return res.status(400).json({ status: 'error', error: 'Enter a name.' });
+  }
+  if (newName === oldName) {
+    return res.status(400).json({ status: 'error', error: 'That\'s already their name.' });
+  }
+
+  const { rows } = await pool.query(
+    'select 1 from staff_roster where division=$1 and outlet=$2 and name=$3',
+    [division, outlet, newName]
+  );
+  if (rows.length) {
+    return res.status(409).json({ status: 'error', error: 'Someone with that exact name is already on this list — add an ID/Note to tell them apart instead.' });
+  }
+
+  try {
+    await withTransaction(async (client) => {
+      const upd = await client.query(
+        'update staff_roster set name=$4 where division=$1 and outlet=$2 and name=$3',
+        [division, outlet, oldName, newName]
+      );
+      if (!upd.rowCount) throw new Error('not_found');
+      await client.query('update results set name=$2 where outlet=$1 and name=$3', [outlet, newName, oldName]);
+      await client.query('update wrong_answers set staff_name=$2 where outlet=$1 and staff_name=$3', [outlet, newName, oldName]);
+      await client.query('update ai_results set name=$2 where outlet=$1 and name=$3', [outlet, newName, oldName]);
+      await client.query('update ai_wrong_answers set staff_name=$2 where outlet=$1 and staff_name=$3', [outlet, newName, oldName]);
+      await client.query('update reports set staff_name=$2 where outlet=$1 and staff_name=$3', [outlet, newName, oldName]);
+    });
+  } catch (err) {
+    if (err.message === 'not_found') {
+      return res.status(404).json({ status: 'error', error: 'Staff member not found.' });
+    }
+    return res.status(500).json({ status: 'error', error: 'Could not rename staff — nothing was changed.' });
+  }
+
+  logAuditSafe({
+    actorType: req.session.scopeType,
+    actorKey: req.session.scopeKey,
+    action: 'staff.rename',
+    summary: `Renamed staff ${outlet}/${oldName} -> ${newName}`,
   });
   res.json({ status: 'ok' });
 });
