@@ -1,6 +1,6 @@
 import { env } from '../config/env.js';
 
-export function buildQuizPrompt(topicLabel, context, count, extraNotes) {
+function buildQuizPrompt(topicLabel, context, count, extraNotes) {
   return `You are creating a bilingual (English + Bahasa Malaysia) multiple-choice training quiz for retail pharmacy staff in Malaysia.
 Topic: "${topicLabel}"
 Reference material:
@@ -18,7 +18,7 @@ Return ONLY valid JSON — no markdown fences, no commentary — matching exactl
 // Same string-aware bracket scan as the GAS extractJsonArray — a stray "]"
 // or "[" inside a quoted question/option can't fool this the way a plain
 // regex would.
-export function extractJsonArray(text) {
+function extractJsonArray(text) {
   const start = text.indexOf('[');
   if (start === -1) return null;
   let depth = 0, inString = false, escaped = false;
@@ -40,7 +40,7 @@ export function extractJsonArray(text) {
   return null;
 }
 
-export async function callGemini(prompt) {
+async function callGemini(prompt) {
   if (!env.geminiApiKey) throw new Error('GEMINI_API_KEY is not set in .env');
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${env.geminiModel}:generateContent?key=${env.geminiApiKey}`;
 

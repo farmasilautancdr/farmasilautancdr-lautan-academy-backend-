@@ -21,7 +21,7 @@ export function addRevokedSid(sid) {
   revokedSids.add(sid);
 }
 
-export async function refreshRevocationCache() {
+async function refreshRevocationCache() {
   const { rows } = await pool.query(
     `select id from sessions where revoked_at is not null and expires_at > now()`
   );
