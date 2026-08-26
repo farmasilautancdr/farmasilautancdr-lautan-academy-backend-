@@ -3,6 +3,7 @@ import bcrypt from 'bcrypt';
 import { pool } from '../config/db.js';
 import { requireAuth, requireScope } from '../middleware/auth.js';
 import { logAuditSafe } from '../services/auditLog.js';
+import { outletsForArea } from './data.js';
 
 export const staffRouter = Router();
 
@@ -185,6 +186,21 @@ staffRouter.delete('/', requireAuth, requireScope('outlet_manager', 'warehouse_m
     summary: `Removed staff ${outlet}/${name}`,
   });
   res.json({ status: 'ok' });
+});
+
+// Area Manager: roster across every outlet in their own region only.
+// scopeKey is the area id (server-verified from the JWT, never client-
+// supplied — see requireAuth), fed through the same outletsForArea lookup
+// /data/scoped-data already uses for this role.
+staffRouter.get('/region', requireAuth, requireScope('area_manager'), async (req, res) => {
+  const outlets = await outletsForArea(req.session.scopeKey);
+  if (!outlets.length) return res.json({ staff: [] });
+
+  const { rows } = await pool.query(
+    'select name, outlet, id_note from staff_roster where outlet = ANY($1) order by outlet, name',
+    [outlets]
+  );
+  res.json({ staff: rows.map(r => ({ Name: r.name, Outlet: r.outlet, IDNote: r.id_note })) });
 });
 
 // Company-wide (not outlet-scoped) — Supervisor tags staff Pharmacist from
