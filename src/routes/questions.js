@@ -6,6 +6,23 @@ import { logAuditSafe } from '../services/auditLog.js';
 
 export const questionsRouter = Router();
 
+// Same pattern as staff.js's withTransaction — file-local, not shared, per
+// existing convention in this backend.
+async function withTransaction(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 // Public, no auth — matches GAS's doGet(), which served the whole question
 // bank before login too. `correct` is withheld now (server grades attempts
 // itself, see POST /data/results) — `id` is included instead so a client
@@ -120,6 +137,54 @@ questionsRouter.post('/', requireAuth, requireScope('supervisor'), async (req, r
     summary: `Added question to topic "${row.topic}": ${row.question_en.slice(0, 60)}`,
   });
   res.json({ status: 'ok', id: rows[0].id });
+});
+
+// Deliberate, explicit action — not a side effect of editing a single
+// question's topic field (PATCH /:id below). A single-question edit could
+// mean "reassign this one question to a different existing topic", which
+// must NOT cascade to every other student's historical results for the
+// old topic; this endpoint is the one place that intentional whole-topic
+// rename actually happens. Cascades into results/wrong_answers/reports —
+// same reasoning as staff.js's PATCH /rename (no FK, matched by text) —
+// so a renamed topic's quiz history stays under one name instead of
+// splitting across old/new. Does NOT touch ai_results/ai_wrong_answers:
+// AI Practice topics come from Content.Topic or a Drive file's own Name,
+// an independent source from this question bank, even when the text
+// happens to match.
+questionsRouter.patch('/topic/rename', requireAuth, requireScope('supervisor'), async (req, res) => {
+  const oldTopic = (req.body.oldTopic || '').toString().trim();
+  const newTopic = (req.body.newTopic || '').toString().trim();
+  if (!oldTopic || !newTopic) {
+    return res.status(400).json({ status: 'error', error: 'Pick the topic to rename and enter a new name.' });
+  }
+  if (newTopic === oldTopic) {
+    return res.status(400).json({ status: 'error', error: 'That\'s already the topic name.' });
+  }
+
+  let counts;
+  try {
+    counts = await withTransaction(async (client) => {
+      const questions = await client.query('update standard_questions set topic=$2 where topic=$1', [oldTopic, newTopic]);
+      if (!questions.rowCount) throw new Error('not_found');
+      const results = await client.query('update results set topic=$2 where topic=$1', [oldTopic, newTopic]);
+      const wrongAnswers = await client.query('update wrong_answers set topic=$2 where topic=$1', [oldTopic, newTopic]);
+      const reports = await client.query('update reports set topic=$2 where topic=$1', [oldTopic, newTopic]);
+      return { questions: questions.rowCount, results: results.rowCount, wrongAnswers: wrongAnswers.rowCount, reports: reports.rowCount };
+    });
+  } catch (err) {
+    if (err.message === 'not_found') {
+      return res.status(404).json({ status: 'error', error: `No questions found under topic "${oldTopic}".` });
+    }
+    return res.status(500).json({ status: 'error', error: 'Could not rename topic — nothing was changed.' });
+  }
+
+  logAuditSafe({
+    actorType: req.session.scopeType,
+    actorKey: req.session.scopeKey,
+    action: 'question.renameTopic',
+    summary: `Renamed topic "${oldTopic}" -> "${newTopic}" (${counts.questions} questions, ${counts.results} results, ${counts.wrongAnswers} wrong answers, ${counts.reports} reports updated)`,
+  });
+  res.json({ status: 'ok', ...counts });
 });
 
 // Full-row overwrite, not partial PATCH semantics — same reasoning as
