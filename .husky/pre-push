@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+set -e
+
+# `set -e` alone kills the script the instant `npm test` fails, before a
+# `status=$?` line ever runs — the teardown below never executes and the
+# test container leaks. `trap ... EXIT` runs regardless of how the script
+# exits and doesn't touch the script's own exit code.
+cleanup() {
+  echo "Stopping test database..."
+  docker compose -f docker-compose.test.yml down -v
+}
+trap cleanup EXIT
+
+echo "Starting disposable test database..."
+docker compose -f docker-compose.test.yml up -d --wait
+
+npm test

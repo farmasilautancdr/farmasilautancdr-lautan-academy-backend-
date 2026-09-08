@@ -6,7 +6,10 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "pretest": "node scripts/apply-test-schema.js",
+    "test": "vitest run",
+    "prepare": "husky"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
@@ -19,5 +22,10 @@
     "multer": "^2.2.0",
     "pdf-parse": "^1.1.1",
     "pg": "^8.12.0"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "supertest": "^7.2.2",
+    "vitest": "^5.0.0"
   }
 }
