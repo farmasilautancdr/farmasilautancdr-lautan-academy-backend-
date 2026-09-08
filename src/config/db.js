@@ -13,9 +13,14 @@ import { env } from './env.js';
 dns.setDefaultResultOrder('ipv4first');
 net.setDefaultAutoSelectFamily(false);
 
+// Local Docker Postgres (docker-compose.test.yml, used by tests) has no SSL
+// listener — Supabase/prod always does. Toggle by host, not by NODE_ENV, so
+// this stays correct even if a real .env ever points at localhost.
+const isLocalDb = /localhost|127\.0\.0\.1/.test(env.databaseUrl);
+
 export const pool = new pg.Pool({
   connectionString: env.databaseUrl,
-  ssl: { rejectUnauthorized: false },
+  ssl: isLocalDb ? false : { rejectUnauthorized: false },
 });
 
 // pg.Pool crashes the whole process on an unhandled 'error' event (e.g. an
