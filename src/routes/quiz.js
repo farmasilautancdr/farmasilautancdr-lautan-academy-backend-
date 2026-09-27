@@ -4,6 +4,7 @@ import { requireAuth, requireScope } from '../middleware/auth.js';
 import { hitRateLimit } from '../middleware/rateLimit.js';
 import { generateQuiz } from '../services/gemini.js';
 import { getDriveFileText } from '../services/drive.js';
+import { outletsForArea } from './data.js';
 
 export const quizRouter = Router();
 
@@ -13,11 +14,23 @@ function generatePasscode() {
   return String(Math.floor(Math.random() * 1000)).padStart(3, '0');
 }
 
+// outlet_manager/warehouse_manager's scopeKey IS the one outlet they own.
+// area_manager's scopeKey is their area id instead — in scope for any
+// outlet inside outletsForArea(scopeKey), not just one. Same 403 shape
+// either way so the frontend needs no new error handling.
+async function assertOutletInScope(req, outlet) {
+  if (req.session.scopeType === 'area_manager') {
+    const outlets = await outletsForArea(req.session.scopeKey);
+    return outlets.includes(outlet);
+  }
+  return req.session.scopeKey === outlet;
+}
+
 // Manager-triggered: generate a quiz, store it, hand back a passcode.
 // One active quiz per outlet — creating a new one overwrites the previous.
-quizRouter.post('/create', requireAuth, requireScope('outlet_manager', 'warehouse_manager'), async (req, res) => {
+quizRouter.post('/create', requireAuth, requireScope('outlet_manager', 'warehouse_manager', 'area_manager'), async (req, res) => {
   const outlet = (req.body.outlet || '').toString().trim().toUpperCase();
-  if (req.session.scopeKey !== outlet) {
+  if (!(await assertOutletInScope(req, outlet))) {
     return res.status(403).json({ error: 'Your session has expired — please log in again.' });
   }
 
@@ -128,9 +141,9 @@ quizRouter.post('/:outlet/check', requireAuth, async (req, res) => {
 });
 
 // Manager dashboard: current code + timer for their outlet.
-quizRouter.get('/:outlet/active', requireAuth, requireScope('outlet_manager', 'warehouse_manager'), async (req, res) => {
+quizRouter.get('/:outlet/active', requireAuth, requireScope('outlet_manager', 'warehouse_manager', 'area_manager'), async (req, res) => {
   const outlet = req.params.outlet.toUpperCase();
-  if (req.session.scopeKey !== outlet) {
+  if (!(await assertOutletInScope(req, outlet))) {
     return res.status(403).json({ error: 'Your session has expired — please log in again.' });
   }
 
@@ -148,9 +161,9 @@ quizRouter.get('/:outlet/active', requireAuth, requireScope('outlet_manager', 'w
 });
 
 // Manager taps "End This Code Now" — deletes the row so it stops resolving.
-quizRouter.post('/:outlet/end', requireAuth, requireScope('outlet_manager', 'warehouse_manager'), async (req, res) => {
+quizRouter.post('/:outlet/end', requireAuth, requireScope('outlet_manager', 'warehouse_manager', 'area_manager'), async (req, res) => {
   const outlet = req.params.outlet.toUpperCase();
-  if (req.session.scopeKey !== outlet) {
+  if (!(await assertOutletInScope(req, outlet))) {
     return res.status(403).json({ error: 'Your session has expired — please log in again.' });
   }
   await pool.query('delete from ai_quizzes where outlet = $1', [outlet]);
