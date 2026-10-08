@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { createHash } from 'crypto';
 import { pool } from '../config/db.js';
 import { requireAuth, requireScope } from '../middleware/auth.js';
-import { generateOutletSuggestion, generateTierSummary } from '../services/gemini.js';
+import { generateOutletSuggestion, generateTierSummary, generateTierRecommendations } from '../services/gemini.js';
 
 export const supervisorInsightsRouter = Router();
 
@@ -96,13 +96,40 @@ function tierSummaryFallback(tier, outlets) {
   return `${sorted.length} outlet(s) scored in the Middle tier, ranging from ${min}% to ${max}%.`;
 }
 
+function tierRecommendationCacheKeyFor(topic, tier, outlets) {
+  const sorted = [...outlets].map(o => `${o.code}:${o.avgPercent}`).sort().join(',');
+  return `tier-recs:${topic}:${tier}:${hash8(sorted)}`;
+}
+
+// Mirrors the client-side RECOMMENDATION_BULLETS in SupervisorDashboard.vue
+// — used only when Gemini fails for a tier's recommendations. Generic/
+// not topic-tailored, same honest-fallback philosophy as STATIC_FALLBACK.
+const RECOMMENDATION_FALLBACK = {
+  top: [
+    { label: 'Incentives', text: 'Recognize and reward staff at these outlets to maintain high quiz performance and morale.' },
+    { label: 'Best Practice Sharing', text: 'Document how these outlets prepare for and review Module Quiz topics, and share it as a standard for other outlets.' },
+    { label: 'Mentorship', text: 'Pair high-scoring staff from these outlets with staff at underperforming outlets for peer coaching.' },
+  ],
+  middle: [
+    { label: 'Targeted Training', text: 'Review the specific questions these outlets got wrong to identify if gaps are knowledge-based or process-based.' },
+    { label: 'Internal Audits', text: 'Have outlet managers run a quick weekly quiz-topic review with staff to catch knowledge gaps early.' },
+    { label: 'Refresher Courses', text: 'Schedule a light refresher on this topic next quarter to close the gap to the top tier.' },
+  ],
+  bottom: [
+    { label: 'Immediate Intervention', text: 'Investigate the root cause with outlet management — staffing gaps, lack of reference material, or need for retraining.' },
+    { label: 'Intensive Retraining', text: 'Staff at these outlets should redo the Module Quiz training material before retaking the quiz.' },
+    { label: 'Monitoring', text: 'Increase check-ins with these outlets and re-quiz within a few weeks to confirm improvement.' },
+  ],
+};
+
 // Request body:
 // {
 //   topic: string,
 //   outlets: [{ code, tier, missedQuestion, correctAnswer }],   // per-outlet Suggestion column
-//   tiers: [{ tier, outlets: [{ code, avgPercent }] }],         // per-tier Summary line (optional)
+//   tiers: [{ tier, outlets: [{ code, avgPercent }] }],         // per-tier Summary + Recommendations (optional)
 // }
-// Response: { suggestions: { [code]: text }, tierSummaries: { [tier]: text } }
+// Response: { suggestions: { [code]: text }, tierSummaries: { [tier]: text },
+//             tierRecommendations: { [tier]: [{ label, text }, ...] } }
 supervisorInsightsRouter.post('/outlet-suggestions', requireAuth, requireScope('supervisor'), async (req, res) => {
   const topic = (req.body.topic || '').toString().trim();
   const outlets = Array.isArray(req.body.outlets) ? req.body.outlets : [];
@@ -132,24 +159,36 @@ supervisorInsightsRouter.post('/outlet-suggestions', requireAuth, requireScope('
   }
 
   const tierSummaries = {};
+  const tierRecommendations = {};
   if (tiers.length) {
     const entries = tiers.map(t => {
       const tier = normalizeTier((t.tier || '').toString());
       const tierOutlets = Array.isArray(t.outlets)
         ? t.outlets.map(o => ({ code: (o.code || '').toString(), avgPercent: Number(o.avgPercent) || 0 }))
         : [];
-      return { tier, outlets: tierOutlets, key: tierSummaryCacheKeyFor(topic, tier, tierOutlets) };
+      return { tier, outlets: tierOutlets };
     }).filter(e => e.outlets.length);
-    const uniqueKeys = [...new Set(entries.map(e => e.key))];
-    const keyToEntry = new Map(entries.map(e => [e.key, e]));
-    const textByKey = await resolveWithCache(
-      uniqueKeys,
-      keyToEntry,
+
+    const summaryEntries = entries.map(e => ({ ...e, key: tierSummaryCacheKeyFor(topic, e.tier, e.outlets) }));
+    const summaryKeys = [...new Set(summaryEntries.map(e => e.key))];
+    const summaryByKey = await resolveWithCache(
+      summaryKeys,
+      new Map(summaryEntries.map(e => [e.key, e])),
       entry => generateTierSummary(topic, entry.tier, entry.outlets),
       entry => tierSummaryFallback(entry.tier, entry.outlets)
     );
-    for (const entry of entries) tierSummaries[entry.tier] = textByKey.get(entry.key);
+    for (const entry of summaryEntries) tierSummaries[entry.tier] = summaryByKey.get(entry.key);
+
+    const recEntries = entries.map(e => ({ ...e, key: tierRecommendationCacheKeyFor(topic, e.tier, e.outlets) }));
+    const recKeys = [...new Set(recEntries.map(e => e.key))];
+    const recByKey = await resolveWithCache(
+      recKeys,
+      new Map(recEntries.map(e => [e.key, e])),
+      entry => generateTierRecommendations(topic, entry.tier, entry.outlets),
+      entry => RECOMMENDATION_FALLBACK[entry.tier]
+    );
+    for (const entry of recEntries) tierRecommendations[entry.tier] = recByKey.get(entry.key);
   }
 
-  res.json({ suggestions, tierSummaries });
+  res.json({ suggestions, tierSummaries, tierRecommendations });
 });

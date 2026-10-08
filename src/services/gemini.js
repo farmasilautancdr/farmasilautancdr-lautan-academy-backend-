@@ -142,3 +142,55 @@ export async function generateTierSummary(topic, tier, outlets) {
   const text = await callGemini(prompt, { responseMimeType: 'text/plain', temperature: 0.4, maxOutputTokens: 150 });
   return text.trim();
 }
+
+// Guidance, not a fixed menu — the prompt explicitly tells Gemini it may
+// swap in a different category if it fits the topic better. These exist
+// so the model has a concrete starting point for "what kind of action
+// belongs in this tier" (reward/reinforce vs close-the-gap vs urgent
+// remediation), matching the reference report's own category choices.
+const TIER_CATEGORY_EXAMPLES = {
+  top: 'Incentives, Best Practice Sharing, Mentorship',
+  middle: 'Targeted Training, Internal Audits, Refresher Courses',
+  bottom: 'Immediate Intervention, Intensive Retraining, Monitoring',
+};
+
+export function buildRecommendationPrompt(topic, tier, outlets) {
+  const tierLabel = TIER_LABEL[tier] || TIER_LABEL.middle;
+  const sorted = [...outlets].sort((a, b) => b.avgPercent - a.avgPercent);
+  const list = sorted.map(o => `${o.code} (${o.avgPercent}%)`).join(', ');
+
+  return `You are a community pharmacy training specialist in Malaysia, writing management recommendations for a retail pharmacy chain's Supervisor report on Module Quiz performance.
+
+Topic: "${topic}"
+Tier: ${tierLabel}
+Outlets in this tier and their average score: ${list}
+
+Write exactly 3 recommendations for this outlet tier, tailored to the "${topic}" topic above — not generic advice that could apply to any topic. Typical categories for this tier are: ${TIER_CATEGORY_EXAMPLES[tier] || TIER_CATEGORY_EXAMPLES.middle} — use one of these if it fits, or substitute a different category if something else is more relevant to this specific topic. Each recommendation needs a short label (2-4 words) and one concrete, actionable sentence naming a specific behavior, product, or process tied to "${topic}" — not filler like "continue to improve."
+
+Return ONLY valid JSON — no markdown fences, no commentary — matching exactly this schema:
+[{"label":"...","text":"..."},{"label":"...","text":"..."},{"label":"...","text":"..."}]`;
+}
+
+export async function generateTierRecommendations(topic, tier, outlets) {
+  const prompt = buildRecommendationPrompt(topic, tier, outlets);
+  const raw = await callGemini(prompt, { temperature: 0.5, maxOutputTokens: 600 });
+
+  let items;
+  try {
+    items = JSON.parse(raw);
+  } catch (e) {
+    const extracted = extractJsonArray(raw);
+    try {
+      items = extracted ? JSON.parse(extracted) : null;
+    } catch (e2) {
+      items = null;
+    }
+  }
+  if (!Array.isArray(items) || !items.length) {
+    throw new Error('Gemini returned a response that could not be read as recommendations.');
+  }
+  return items
+    .filter(i => i && i.label && i.text)
+    .slice(0, 3)
+    .map(i => ({ label: i.label.toString().trim(), text: i.text.toString().trim() }));
+}

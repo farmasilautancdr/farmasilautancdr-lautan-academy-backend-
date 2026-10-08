@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSuggestionPrompt, buildTierSummaryPrompt } from '../src/services/gemini.js';
+import { buildSuggestionPrompt, buildTierSummaryPrompt, buildRecommendationPrompt } from '../src/services/gemini.js';
 
 describe('buildSuggestionPrompt', () => {
   it('includes the topic, a tier description, and the missed question/answer', () => {
@@ -50,5 +50,26 @@ describe('buildTierSummaryPrompt', () => {
     const prompt = buildTierSummaryPrompt('Supplements', 'middle', [{ code: 'R1-001', avgPercent: 90 }]);
     expect(prompt).toContain('exactly one sentence');
     expect(prompt).toContain('Plain text only, no markdown');
+  });
+});
+
+describe('buildRecommendationPrompt', () => {
+  it('includes the topic, tier, outlet scores, and that tier\'s category examples', () => {
+    const prompt = buildRecommendationPrompt('Supplements', 'top', [{ code: 'R1-001', avgPercent: 98 }]);
+    expect(prompt).toContain('Supplements');
+    expect(prompt).toContain('top-performing');
+    expect(prompt).toContain('R1-001 (98%)');
+    expect(prompt).toContain('Incentives, Best Practice Sharing, Mentorship');
+  });
+
+  it('tells the model it may substitute a different category', () => {
+    const prompt = buildRecommendationPrompt('Antibiotics', 'bottom', [{ code: 'R1-001', avgPercent: 60 }]);
+    expect(prompt).toContain('Immediate Intervention, Intensive Retraining, Monitoring');
+    expect(prompt).toContain('substitute a different category');
+  });
+
+  it('requests a 3-item JSON array with label/text fields', () => {
+    const prompt = buildRecommendationPrompt('Supplements', 'middle', [{ code: 'R1-001', avgPercent: 90 }]);
+    expect(prompt).toContain('[{"label":"...","text":"..."},{"label":"...","text":"..."},{"label":"...","text":"..."}]');
   });
 });
