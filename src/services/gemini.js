@@ -40,7 +40,7 @@ function extractJsonArray(text) {
   return null;
 }
 
-async function callGemini(prompt) {
+async function callGemini(prompt, generationConfig = {}) {
   if (!env.geminiApiKey) throw new Error('GEMINI_API_KEY is not set in .env');
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${env.geminiModel}:generateContent?key=${env.geminiApiKey}`;
 
@@ -50,6 +50,7 @@ async function callGemini(prompt) {
       temperature: 0.6,
       responseMimeType: 'application/json',
       maxOutputTokens: 8192,
+      ...generationConfig,
     },
   };
 
@@ -89,4 +90,31 @@ export async function generateQuiz(topicLabel, context, count, extraNotes) {
   if (!questions || !questions.length) throw new Error('Gemini did not return any usable questions. Please try again.');
   questions.forEach(q => { q.topic = topicLabel; });
   return questions;
+}
+
+const TIER_LABEL = {
+  top: 'top-performing (scoring 95% or higher)',
+  middle: 'middling (scoring 85-94%)',
+  bottom: 'struggling (scoring 84% or lower)',
+};
+
+export function buildSuggestionPrompt(topic, tier, missedQuestion, correctAnswer) {
+  const tierLabel = TIER_LABEL[tier] || TIER_LABEL.middle;
+  const missedPart = missedQuestion
+    ? `The single most commonly missed question at this outlet for this topic was:\n"""\n${missedQuestion}\n"""\nThe correct answer is: "${correctAnswer || '(not recorded)'}"`
+    : `No specific question data is available — staff at this outlet got nearly everything right on this topic, or no wrong-answer data was recorded.`;
+
+  return `You are a community pharmacy training specialist in Malaysia, advising a retail pharmacy chain's Supervisor on how one outlet should act on its Module Quiz results.
+
+Topic: "${topic}"
+This outlet's staff are ${tierLabel} on this topic.
+${missedPart}
+
+Write 2 to 4 sentences of concrete, specific advice for this outlet's manager to act on before the next quiz cycle. If the topic is about a specific product, supplement, or drug class, name concrete cross-sell/upsell pairings and one real counselling point tied directly to the missed question above. Do not write generic filler like "continue to improve" or "leverage your strengths" — every sentence must name a specific action, product, or behavior. Plain text only, no markdown, no headings, no bullet points.`;
+}
+
+export async function generateOutletSuggestion(topic, tier, missedQuestion, correctAnswer) {
+  const prompt = buildSuggestionPrompt(topic, tier, missedQuestion, correctAnswer);
+  const text = await callGemini(prompt, { responseMimeType: 'text/plain', temperature: 0.4, maxOutputTokens: 400 });
+  return text.trim();
 }
