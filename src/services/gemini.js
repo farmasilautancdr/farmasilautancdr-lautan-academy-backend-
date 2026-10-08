@@ -118,3 +118,27 @@ export async function generateOutletSuggestion(topic, tier, missedQuestion, corr
   const text = await callGemini(prompt, { responseMimeType: 'text/plain', temperature: 0.4, maxOutputTokens: 400 });
   return text.trim();
 }
+
+// One sentence per tier (not per outlet) — the "Summary:" line in the
+// Outlet Summary sheet's tier breakdown, modeled on a reference report
+// Supervisor provided. outlets is [{ code, avgPercent }] for every outlet
+// that landed in this tier for the current topic/filter scope.
+export function buildTierSummaryPrompt(topic, tier, outlets) {
+  const tierLabel = TIER_LABEL[tier] || TIER_LABEL.middle;
+  const sorted = [...outlets].sort((a, b) => b.avgPercent - a.avgPercent);
+  const list = sorted.map(o => `${o.code} (${o.avgPercent}%)`).join(', ');
+
+  return `You are a community pharmacy training specialist in Malaysia, summarizing one performance tier of a retail pharmacy chain's Module Quiz results for a Supervisor's report.
+
+Topic: "${topic}"
+Tier: ${tierLabel}
+Outlets in this tier and their average score: ${list}
+
+Write exactly one sentence (max 30 words) summarizing this tier's performance. Name the standout outlet by its code — the best one if this is the top tier, the worst one if this is the bottom tier, or describe the spread if this is the middle tier. Plain text only, no markdown.`;
+}
+
+export async function generateTierSummary(topic, tier, outlets) {
+  const prompt = buildTierSummaryPrompt(topic, tier, outlets);
+  const text = await callGemini(prompt, { responseMimeType: 'text/plain', temperature: 0.4, maxOutputTokens: 150 });
+  return text.trim();
+}

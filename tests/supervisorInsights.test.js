@@ -2,12 +2,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
 import { randomUUID } from 'crypto';
 
-vi.mock('../src/services/gemini.js', () => ({ generateOutletSuggestion: vi.fn() }));
+vi.mock('../src/services/gemini.js', () => ({ generateOutletSuggestion: vi.fn(), generateTierSummary: vi.fn() }));
 
 import { app } from '../src/app.js';
 import { pool } from '../src/config/db.js';
 import { issueToken } from '../src/middleware/auth.js';
-import { generateOutletSuggestion } from '../src/services/gemini.js';
+import { generateOutletSuggestion, generateTierSummary } from '../src/services/gemini.js';
 
 describe('POST /supervisor-insights/outlet-suggestions', () => {
   let supervisorToken, topic, keysUsed;
@@ -15,6 +15,8 @@ describe('POST /supervisor-insights/outlet-suggestions', () => {
   beforeEach(async () => {
     generateOutletSuggestion.mockReset();
     generateOutletSuggestion.mockResolvedValue('Generated suggestion text.');
+    generateTierSummary.mockReset();
+    generateTierSummary.mockResolvedValue('Generated tier summary text.');
     supervisorToken = await issueToken('supervisor', 'ALL');
     topic = `TESTTOPIC_${randomUUID()}`;
     keysUsed = [];
@@ -127,5 +129,43 @@ describe('POST /supervisor-insights/outlet-suggestions', () => {
     const { rows } = await pool.query(`select key from system_settings where key like $1`, [`suggestion:${topic}:%`]);
     keysUsed = rows.map(r => r.key);
     expect(rows).toHaveLength(1);
+  });
+
+  it('accepts a tiers-only request (no outlets) and returns a tier summary', async () => {
+    const res = await request(app)
+      .post('/supervisor-insights/outlet-suggestions')
+      .set('Authorization', `Bearer ${supervisorToken}`)
+      .send({ topic, tiers: [{ tier: 'top', outlets: [{ code: 'R1-001', avgPercent: 98 }] }] });
+    expect(res.status).toBe(200);
+    expect(res.body.tierSummaries.top).toBe('Generated tier summary text.');
+    expect(generateTierSummary).toHaveBeenCalledWith(topic, 'top', [{ code: 'R1-001', avgPercent: 98 }]);
+    const { rows } = await pool.query(`select key from system_settings where key like $1`, [`tier-summary:${topic}:%`]);
+    keysUsed = rows.map(r => r.key);
+    expect(rows).toHaveLength(1);
+  });
+
+  it('falls back to a deterministic sentence when Gemini throws for a tier summary', async () => {
+    generateTierSummary.mockRejectedValue(new Error('Gemini request failed (503)'));
+    const res = await request(app)
+      .post('/supervisor-insights/outlet-suggestions')
+      .set('Authorization', `Bearer ${supervisorToken}`)
+      .send({
+        topic,
+        tiers: [{ tier: 'bottom', outlets: [{ code: 'R1-001', avgPercent: 80 }, { code: 'R1-002', avgPercent: 60 }] }],
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.tierSummaries.bottom).toContain('R1-002 lowest at 60%');
+    const { rows } = await pool.query(`select key from system_settings where key like $1`, [`tier-summary:${topic}:%`]);
+    expect(rows).toHaveLength(0);
+  });
+
+  it('ignores a tier entry with an empty outlets array', async () => {
+    const res = await request(app)
+      .post('/supervisor-insights/outlet-suggestions')
+      .set('Authorization', `Bearer ${supervisorToken}`)
+      .send({ topic, tiers: [{ tier: 'middle', outlets: [] }] });
+    expect(res.status).toBe(200);
+    expect(res.body.tierSummaries).toEqual({});
+    expect(generateTierSummary).not.toHaveBeenCalled();
   });
 });
